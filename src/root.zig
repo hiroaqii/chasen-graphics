@@ -1,18 +1,16 @@
-//! By convention, root.zig is the root source file when making a package.
 const std = @import("std");
-const Io = std.Io;
 
-/// This is a documentation comment to explain the `printAnotherMessage` function below.
+/// Package version exposed as a simple smoke-testable value.
 ///
-/// Accepting an `Io.Writer` instance is a handy way to write reusable code.
-pub fn printAnotherMessage(writer: *Io.Writer) Io.Writer.Error!void {
-    try writer.print("Run `zig build test` to run the tests.\n", .{});
+/// `chasen-graphics` starts as a std-only package. Later modules may integrate
+/// with Chasen `Surface` types, but pure glyph/block data should stay usable
+/// without pulling in the Chasen runtime.
+pub const version = "0.0.0";
+
+test "chasen-graphics root imports" {
+    try std.testing.expectEqualStrings("0.0.0", version);
 }
 
-pub fn add(a: i32, b: i32) i32 {
-    return a + b;
-}
-
-test "basic add functionality" {
-    try std.testing.expect(add(3, 7) == 10);
+test {
+    std.testing.refAllDecls(@This());
 }
