@@ -1,5 +1,7 @@
 const std = @import("std");
 
+pub const glyph = @import("glyph.zig");
+
 /// Package version exposed as a simple smoke-testable value.
 ///
 /// `chasen-graphics` starts as a std-only package. Later modules may integrate

@@ -25,6 +25,13 @@ Out of scope:
 - app-specific image download or cache policy
 - required image decoder dependencies
 
+## Glyphs
+
+- `glyph.rating.filled`: filled rating star.
+- `glyph.rating.empty`: empty rating star.
+- `glyph.rating.filled_ascii`: ASCII fallback for filled rating.
+- `glyph.rating.empty_ascii`: ASCII fallback for empty rating.
+
 ## Development
 
 Run tests:
