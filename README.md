@@ -59,6 +59,20 @@ provide ordered frame labels.
 Unicode spinner frames depend on terminal/font support. Use ASCII frame sets
 when a conservative fallback is needed.
 
+## Blocks
+
+- `blocks.progress.filled`: filled progress cell.
+- `blocks.progress.empty`: empty progress cell.
+- `blocks.progress.filled_ascii`: ASCII fallback for filled progress.
+- `blocks.progress.empty_ascii`: ASCII fallback for empty progress.
+
+Progress value, width, clipping, style, and redraw timing are app/component
+policy; the constants only provide reusable cell labels.
+
+`blocks.progress.empty` is a space so renderers can use background style for the
+empty region. Use `blocks.progress.empty_ascii` when visible empty cells are
+needed in plain text.
+
 ## Development
 
 Run tests:
