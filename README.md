@@ -31,6 +31,12 @@ Out of scope:
 - `glyph.rating.empty`: empty rating star.
 - `glyph.rating.filled_ascii`: ASCII fallback for filled rating.
 - `glyph.rating.empty_ascii`: ASCII fallback for empty rating.
+- `glyph.status.ok`: successful or completed status.
+- `glyph.status.err`: failed or unavailable status.
+- `glyph.status.warn`: warning status.
+- `glyph.status.info`: informational status.
+- `glyph.status.ok_ascii`: ASCII fallback for successful status.
+- `glyph.status.err_ascii`: ASCII fallback for failed status.
 
 ## Development
 
