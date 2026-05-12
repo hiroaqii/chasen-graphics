@@ -80,6 +80,8 @@ pub const spinner = struct {
     pub const line = [_][]const u8{ "|", "/", "-", "\\" };
     /// Ten-frame Unicode dot spinner.
     pub const dots = [_][]const u8{ "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" };
+    /// Four-frame Unicode circle spinner.
+    pub const circle = [_][]const u8{ "◴", "◷", "◶", "◵" };
 };
 
 test "rating glyphs expose unicode and ASCII fallback symbols" {
@@ -130,4 +132,12 @@ test "spinner glyphs expose ordered dot frames" {
     try std.testing.expectEqualStrings("⠧", spinner.dots[7]);
     try std.testing.expectEqualStrings("⠇", spinner.dots[8]);
     try std.testing.expectEqualStrings("⠏", spinner.dots[9]);
+}
+
+test "spinner glyphs expose ordered circle frames" {
+    try std.testing.expectEqual(@as(usize, 4), spinner.circle.len);
+    try std.testing.expectEqualStrings("◴", spinner.circle[0]);
+    try std.testing.expectEqualStrings("◷", spinner.circle[1]);
+    try std.testing.expectEqualStrings("◶", spinner.circle[2]);
+    try std.testing.expectEqualStrings("◵", spinner.circle[3]);
 }

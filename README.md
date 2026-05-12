@@ -45,6 +45,7 @@ Out of scope:
 - `glyph.radio.selected`: selected radio marker.
 - `glyph.spinner.line`: four-frame ASCII line spinner.
 - `glyph.spinner.dots`: ten-frame Unicode dot spinner.
+- `glyph.spinner.circle`: four-frame Unicode circle spinner.
 
 Selection marker meaning is app/component policy; the constants only provide
 default glyph choices.
