@@ -78,6 +78,8 @@ pub const radio = struct {
 pub const spinner = struct {
     /// Four-frame ASCII line spinner.
     pub const line = [_][]const u8{ "|", "/", "-", "\\" };
+    /// Ten-frame Unicode dot spinner.
+    pub const dots = [_][]const u8{ "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" };
 };
 
 test "rating glyphs expose unicode and ASCII fallback symbols" {
@@ -114,4 +116,18 @@ test "spinner glyphs expose ordered line frames" {
     try std.testing.expectEqualStrings("/", spinner.line[1]);
     try std.testing.expectEqualStrings("-", spinner.line[2]);
     try std.testing.expectEqualStrings("\\", spinner.line[3]);
+}
+
+test "spinner glyphs expose ordered dot frames" {
+    try std.testing.expectEqual(@as(usize, 10), spinner.dots.len);
+    try std.testing.expectEqualStrings("⠋", spinner.dots[0]);
+    try std.testing.expectEqualStrings("⠙", spinner.dots[1]);
+    try std.testing.expectEqualStrings("⠹", spinner.dots[2]);
+    try std.testing.expectEqualStrings("⠸", spinner.dots[3]);
+    try std.testing.expectEqualStrings("⠼", spinner.dots[4]);
+    try std.testing.expectEqualStrings("⠴", spinner.dots[5]);
+    try std.testing.expectEqualStrings("⠦", spinner.dots[6]);
+    try std.testing.expectEqualStrings("⠧", spinner.dots[7]);
+    try std.testing.expectEqualStrings("⠇", spinner.dots[8]);
+    try std.testing.expectEqualStrings("⠏", spinner.dots[9]);
 }

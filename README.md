@@ -44,6 +44,7 @@ Out of scope:
 - `glyph.radio.unselected`: unselected radio marker.
 - `glyph.radio.selected`: selected radio marker.
 - `glyph.spinner.line`: four-frame ASCII line spinner.
+- `glyph.spinner.dots`: ten-frame Unicode dot spinner.
 
 Selection marker meaning is app/component policy; the constants only provide
 default glyph choices.
@@ -53,6 +54,9 @@ default marker glyphs.
 
 Spinner frame advancement is app/component/animation policy; the constants only
 provide ordered frame labels.
+
+Unicode spinner frames depend on terminal/font support. Use ASCII frame sets
+when a conservative fallback is needed.
 
 ## Development
 
