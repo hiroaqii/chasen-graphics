@@ -39,9 +39,16 @@ Out of scope:
 - `glyph.status.err_ascii`: ASCII fallback for failed status.
 - `glyph.selection.marker`: active or focused item marker.
 - `glyph.selection.marker_ascii`: ASCII fallback for active or focused item marker.
+- `glyph.checkbox.unchecked`: unchecked checkbox marker.
+- `glyph.checkbox.checked`: checked checkbox marker.
+- `glyph.radio.unselected`: unselected radio marker.
+- `glyph.radio.selected`: selected radio marker.
 
 Selection marker meaning is app/component policy; the constants only provide
 default glyph choices.
+
+Checkbox and radio state are app/component policy; the constants only provide
+default marker glyphs.
 
 ## Development
 

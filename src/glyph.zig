@@ -48,6 +48,29 @@ pub const selection = struct {
     pub const marker_ascii = ">";
 };
 
+/// Checkbox marker glyph constants.
+///
+/// These markers mirror the current chasen-ui defaults. They are still plain
+/// glyph data: checked state and toggle behavior stay with the app or UI
+/// component.
+pub const checkbox = struct {
+    /// Unchecked checkbox marker.
+    pub const unchecked = "[ ]";
+    /// Checked checkbox marker.
+    pub const checked = "[x]";
+};
+
+/// Radio marker glyph constants.
+///
+/// These markers mirror the current chasen-ui defaults. Group selection policy
+/// stays with the app or UI component.
+pub const radio = struct {
+    /// Unselected radio marker.
+    pub const unselected = "( )";
+    /// Selected radio marker.
+    pub const selected = "(o)";
+};
+
 test "rating glyphs expose unicode and ASCII fallback symbols" {
     try std.testing.expectEqualStrings("★", rating.filled);
     try std.testing.expectEqualStrings("☆", rating.empty);
@@ -67,4 +90,11 @@ test "status glyphs expose unicode and ASCII fallback symbols" {
 test "selection glyphs expose unicode and ASCII fallback symbols" {
     try std.testing.expectEqualStrings("▶", selection.marker);
     try std.testing.expectEqualStrings(">", selection.marker_ascii);
+}
+
+test "checkbox and radio glyphs expose marker symbols" {
+    try std.testing.expectEqualStrings("[ ]", checkbox.unchecked);
+    try std.testing.expectEqualStrings("[x]", checkbox.checked);
+    try std.testing.expectEqualStrings("( )", radio.unselected);
+    try std.testing.expectEqualStrings("(o)", radio.selected);
 }
