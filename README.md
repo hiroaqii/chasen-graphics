@@ -43,12 +43,16 @@ Out of scope:
 - `glyph.checkbox.checked`: checked checkbox marker.
 - `glyph.radio.unselected`: unselected radio marker.
 - `glyph.radio.selected`: selected radio marker.
+- `glyph.spinner.line`: four-frame ASCII line spinner.
 
 Selection marker meaning is app/component policy; the constants only provide
 default glyph choices.
 
 Checkbox and radio state are app/component policy; the constants only provide
 default marker glyphs.
+
+Spinner frame advancement is app/component/animation policy; the constants only
+provide ordered frame labels.
 
 ## Development
 

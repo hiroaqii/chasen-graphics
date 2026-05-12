@@ -71,6 +71,15 @@ pub const radio = struct {
     pub const selected = "(o)";
 };
 
+/// Spinner frame glyph constants.
+///
+/// These are ordered frame labels, not animation state. Apps, `chasen-anim`, or
+/// UI components decide which index to show for a given frame or tick.
+pub const spinner = struct {
+    /// Four-frame ASCII line spinner.
+    pub const line = [_][]const u8{ "|", "/", "-", "\\" };
+};
+
 test "rating glyphs expose unicode and ASCII fallback symbols" {
     try std.testing.expectEqualStrings("★", rating.filled);
     try std.testing.expectEqualStrings("☆", rating.empty);
@@ -97,4 +106,12 @@ test "checkbox and radio glyphs expose marker symbols" {
     try std.testing.expectEqualStrings("[x]", checkbox.checked);
     try std.testing.expectEqualStrings("( )", radio.unselected);
     try std.testing.expectEqualStrings("(o)", radio.selected);
+}
+
+test "spinner glyphs expose ordered line frames" {
+    try std.testing.expectEqual(@as(usize, 4), spinner.line.len);
+    try std.testing.expectEqualStrings("|", spinner.line[0]);
+    try std.testing.expectEqualStrings("/", spinner.line[1]);
+    try std.testing.expectEqualStrings("-", spinner.line[2]);
+    try std.testing.expectEqualStrings("\\", spinner.line[3]);
 }
