@@ -19,9 +19,31 @@ pub const progress = struct {
     pub const empty_ascii = ".";
 };
 
+/// Shaded block glyph constants ordered from lighter to darker.
+///
+/// These are reusable cell labels for coarse density or brightness displays.
+/// Numeric brightness mapping belongs in a later helper, not in this data set.
+pub const shade = struct {
+    /// Light shade block.
+    pub const light = "░";
+    /// Medium shade block.
+    pub const medium = "▒";
+    /// Dark shade block.
+    pub const dark = "▓";
+    /// Full block.
+    pub const full = "█";
+};
+
 test "progress blocks expose unicode and ASCII fallback glyphs" {
     try std.testing.expectEqualStrings("█", progress.filled);
     try std.testing.expectEqualStrings(" ", progress.empty);
     try std.testing.expectEqualStrings("|", progress.filled_ascii);
     try std.testing.expectEqualStrings(".", progress.empty_ascii);
+}
+
+test "shade blocks expose ordered density glyphs" {
+    try std.testing.expectEqualStrings("░", shade.light);
+    try std.testing.expectEqualStrings("▒", shade.medium);
+    try std.testing.expectEqualStrings("▓", shade.dark);
+    try std.testing.expectEqualStrings("█", shade.full);
 }

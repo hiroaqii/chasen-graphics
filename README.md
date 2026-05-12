@@ -65,6 +65,10 @@ when a conservative fallback is needed.
 - `blocks.progress.empty`: empty progress cell.
 - `blocks.progress.filled_ascii`: ASCII fallback for filled progress.
 - `blocks.progress.empty_ascii`: ASCII fallback for empty progress.
+- `blocks.shade.light`: light shade block.
+- `blocks.shade.medium`: medium shade block.
+- `blocks.shade.dark`: dark shade block.
+- `blocks.shade.full`: full block.
 
 Progress value, width, clipping, style, and redraw timing are app/component
 policy; the constants only provide reusable cell labels.
@@ -72,6 +76,9 @@ policy; the constants only provide reusable cell labels.
 `blocks.progress.empty` is a space so renderers can use background style for the
 empty region. Use `blocks.progress.empty_ascii` when visible empty cells are
 needed in plain text.
+
+Shade blocks are ordered from lighter to darker. Numeric brightness mapping is
+left to a later helper.
 
 ## Development
 
