@@ -36,6 +36,18 @@ pub const status = struct {
     pub const err_ascii = "x";
 };
 
+/// Selection-related glyph constants.
+///
+/// Selection markers indicate a current, focused, active, or chosen item. The
+/// exact meaning stays with the app or UI component. Rendering code can choose
+/// the Unicode marker or ASCII fallback based on terminal/font needs.
+pub const selection = struct {
+    /// Compact marker for the active or focused item.
+    pub const marker = "▶";
+    /// ASCII fallback for `marker`.
+    pub const marker_ascii = ">";
+};
+
 test "rating glyphs expose unicode and ASCII fallback symbols" {
     try std.testing.expectEqualStrings("★", rating.filled);
     try std.testing.expectEqualStrings("☆", rating.empty);
@@ -50,4 +62,9 @@ test "status glyphs expose unicode and ASCII fallback symbols" {
     try std.testing.expectEqualStrings("i", status.info);
     try std.testing.expectEqualStrings("v", status.ok_ascii);
     try std.testing.expectEqualStrings("x", status.err_ascii);
+}
+
+test "selection glyphs expose unicode and ASCII fallback symbols" {
+    try std.testing.expectEqualStrings("▶", selection.marker);
+    try std.testing.expectEqualStrings(">", selection.marker_ascii);
 }

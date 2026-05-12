@@ -37,6 +37,11 @@ Out of scope:
 - `glyph.status.info`: informational status.
 - `glyph.status.ok_ascii`: ASCII fallback for successful status.
 - `glyph.status.err_ascii`: ASCII fallback for failed status.
+- `glyph.selection.marker`: active or focused item marker.
+- `glyph.selection.marker_ascii`: ASCII fallback for active or focused item marker.
+
+Selection marker meaning is app/component policy; the constants only provide
+default glyph choices.
 
 ## Development
 
