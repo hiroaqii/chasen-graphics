@@ -115,6 +115,7 @@ glyphs because it indexes entries, not raw bytes.
 - `pixel.TrueColorCell`: glyph plus std-only truecolor style plan.
 - `pixel.halfBlock(upper, lower)`: build a half-block render plan.
 - `pixel.halfBlockTrueColor(cell)`: map a half-block plan to a truecolor cell plan.
+- `pixel.renderHalfBlockRowTrueColor(out, upper_row, lower_row)`: render one row into caller-provided cells.
 - `pixel.nearestColorIndex(color, palette)`: find the nearest palette index.
 - `pixel.nearestColor(color, palette)`: find the nearest palette color.
 
@@ -128,6 +129,10 @@ later helpers.
 `pixel.halfBlockTrueColor` maps the upper pixel to foreground and the lower
 pixel to background. It still returns std-only data; Chasen/libvaxis style
 conversion is left to a later adapter.
+
+`pixel.renderHalfBlockRowTrueColor` fills a caller-provided `TrueColorCell`
+buffer. It is a small std-only rendering helper; it does not allocate and does
+not write to a Chasen `Surface`.
 
 `pixel.nearestColorIndex` and `pixel.nearestColor` use simple squared RGB
 distance. They are fallback helpers for callers that need to map truecolor input

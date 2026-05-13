@@ -90,6 +90,22 @@ pub fn halfBlockTrueColor(cell: HalfBlockCell) TrueColorCell {
     };
 }
 
+/// Render one row of half-block cells into a caller-provided output buffer.
+///
+/// `upper_row` and `lower_row` are vertical pixel pairs. Each output cell uses
+/// the upper pixel as foreground and the lower pixel as background. The function
+/// renders as many cells as fit in all three slices and returns that count.
+///
+/// This helper is intentionally std-only: it fills `TrueColorCell` values, but
+/// does not write to a Chasen `Surface` or libvaxis window.
+pub fn renderHalfBlockRowTrueColor(out: []TrueColorCell, upper_row: []const Pixel, lower_row: []const Pixel) usize {
+    const count = @min(out.len, @min(upper_row.len, lower_row.len));
+    for (out[0..count], upper_row[0..count], lower_row[0..count]) |*cell, upper, lower| {
+        cell.* = halfBlockTrueColor(halfBlock(upper, lower));
+    }
+    return count;
+}
+
 /// Return the nearest color index in `palette` using squared RGB distance.
 ///
 /// This is a small fallback helper for renderers that cannot use arbitrary
@@ -218,6 +234,51 @@ test "halfBlockTrueColor leaves alpha policy outside the style mapping" {
 
     try std.testing.expectEqual(@as(u8, 1), styled.style.fg.?.r);
     try std.testing.expectEqual(@as(u8, 4), styled.style.bg.?.r);
+}
+
+test "renderHalfBlockRowTrueColor fills caller-provided cells" {
+    const upper = [_]Pixel{
+        .{ .rgb = .{ .r = 255, .g = 0, .b = 0 } },
+        .{ .rgb = .{ .r = 0, .g = 255, .b = 0 } },
+    };
+    const lower = [_]Pixel{
+        .{ .rgb = .{ .r = 0, .g = 0, .b = 255 } },
+        .{ .rgb = .{ .r = 255, .g = 255, .b = 0 } },
+    };
+    var out = [_]TrueColorCell{
+        .{ .glyph = "", .style = .{} },
+        .{ .glyph = "", .style = .{} },
+    };
+
+    const count = renderHalfBlockRowTrueColor(&out, &upper, &lower);
+
+    try std.testing.expectEqual(@as(usize, 2), count);
+    try std.testing.expectEqualStrings("▀", out[0].glyph);
+    try std.testing.expectEqual(@as(u8, 255), out[0].style.fg.?.r);
+    try std.testing.expectEqual(@as(u8, 255), out[0].style.bg.?.b);
+    try std.testing.expectEqualStrings("▀", out[1].glyph);
+    try std.testing.expectEqual(@as(u8, 255), out[1].style.fg.?.g);
+    try std.testing.expectEqual(@as(u8, 255), out[1].style.bg.?.r);
+}
+
+test "renderHalfBlockRowTrueColor stops at the shortest slice" {
+    const upper = [_]Pixel{
+        .{ .rgb = .{ .r = 1, .g = 0, .b = 0 } },
+        .{ .rgb = .{ .r = 2, .g = 0, .b = 0 } },
+    };
+    const lower = [_]Pixel{
+        .{ .rgb = .{ .r = 3, .g = 0, .b = 0 } },
+        .{ .rgb = .{ .r = 4, .g = 0, .b = 0 } },
+    };
+    var out = [_]TrueColorCell{
+        .{ .glyph = "", .style = .{} },
+    };
+
+    const count = renderHalfBlockRowTrueColor(&out, &upper, &lower);
+
+    try std.testing.expectEqual(@as(usize, 1), count);
+    try std.testing.expectEqual(@as(u8, 1), out[0].style.fg.?.r);
+    try std.testing.expectEqual(@as(u8, 3), out[0].style.bg.?.r);
 }
 
 test "nearestColorIndex returns the closest palette entry" {
