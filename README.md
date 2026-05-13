@@ -96,10 +96,15 @@ is an entry array because it contains multi-byte UTF-8 block glyphs.
 
 - `ascii.brightnessToIndex(brightness, entry_count)`: map normalized brightness
   to a ramp entry index.
+- `ascii.brightnessToGlyph(brightness, entries)`: map normalized brightness to
+  a ramp glyph entry.
 
 Pass the number of ramp entries to `brightnessToIndex`. For ASCII-only string
 ramps, `.len` is the entry count. For UTF-8 entry-array ramps such as
 `ascii.ramp.shade`, `.len` is also the entry count.
+
+Pass an entry array to `brightnessToGlyph`. It is safe for multi-byte UTF-8
+glyphs because it indexes entries, not raw bytes.
 
 ## Development
 

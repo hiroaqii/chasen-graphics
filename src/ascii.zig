@@ -41,6 +41,16 @@ pub fn brightnessToIndex(brightness: f32, entry_count: usize) usize {
     return @min(index, entry_count - 1);
 }
 
+/// Map normalized brightness to a glyph entry.
+///
+/// `entries` is an ordered ramp entry list. It can contain ASCII entries or
+/// multi-byte UTF-8 glyphs. Non-NaN brightness values are clamped into
+/// `0.0...1.0`. `NaN` brightness and empty ramps return an empty string.
+pub fn brightnessToGlyph(brightness: f32, entries: []const []const u8) []const u8 {
+    if (entries.len == 0 or std.math.isNan(brightness)) return "";
+    return entries[brightnessToIndex(brightness, entries.len)];
+}
+
 fn clamp01(value: f32) f32 {
     if (value <= 0.0) return 0.0;
     if (value >= 1.0) return 1.0;
@@ -90,4 +100,17 @@ test "brightnessToIndex handles empty ramps and NaN brightness" {
 test "brightnessToIndex uses entry counts for UTF-8 ramp arrays" {
     try std.testing.expectEqual(@as(usize, 2), brightnessToIndex(0.5, ramp.shade.len));
     try std.testing.expectEqual(@as(usize, 4), brightnessToIndex(1.0, ramp.shade.len));
+}
+
+test "brightnessToGlyph maps normalized brightness to glyph entries" {
+    try std.testing.expectEqualStrings(" ", brightnessToGlyph(0.0, &ramp.shade));
+    try std.testing.expectEqualStrings("▒", brightnessToGlyph(0.5, &ramp.shade));
+    try std.testing.expectEqualStrings("█", brightnessToGlyph(1.0, &ramp.shade));
+}
+
+test "brightnessToGlyph clamps brightness and handles empty input" {
+    try std.testing.expectEqualStrings(" ", brightnessToGlyph(-1.0, &ramp.shade));
+    try std.testing.expectEqualStrings("█", brightnessToGlyph(2.0, &ramp.shade));
+    try std.testing.expectEqualStrings("", brightnessToGlyph(0.5, &.{}));
+    try std.testing.expectEqualStrings("", brightnessToGlyph(std.math.nan(f32), &ramp.shade));
 }
