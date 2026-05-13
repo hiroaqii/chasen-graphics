@@ -82,6 +82,13 @@ needed in plain text.
 Shade blocks are ordered from lighter to darker. Numeric brightness mapping is
 left to a later helper.
 
+## ASCII
+
+- `ascii.ramp.basic`: basic brightness ramp ordered from darker to brighter.
+
+Brightness-to-index mapping is a separate helper; the ramp constants only
+provide reusable ordered character sets.
+
 ## Development
 
 Run tests:
