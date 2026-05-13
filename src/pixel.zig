@@ -39,6 +39,29 @@ pub const HalfBlockCell = struct {
     lower: Pixel,
 };
 
+/// Minimal terminal truecolor style plan.
+///
+/// This is not a Chasen or libvaxis style. It is a std-only data shape that
+/// records the intended foreground/background RGB colors before a later adapter
+/// converts them to the renderer's concrete cell style type.
+pub const TrueColorStyle = struct {
+    /// Foreground RGB color, when the glyph needs one.
+    fg: ?Rgb = null,
+    /// Background RGB color, when the cell needs one.
+    bg: ?Rgb = null,
+};
+
+/// A glyph plus a std-only truecolor style plan.
+///
+/// This type lets pixel helpers describe what should be drawn without deciding
+/// how a specific terminal renderer stores color attributes.
+pub const TrueColorCell = struct {
+    /// Glyph to draw in the terminal cell.
+    glyph: []const u8,
+    /// Foreground/background color plan for the glyph.
+    style: TrueColorStyle,
+};
+
 /// Build a half-block cell plan from two vertical pixels.
 ///
 /// This function does not composite, blend, or convert colors to terminal
@@ -48,6 +71,22 @@ pub fn halfBlock(upper: Pixel, lower: Pixel) HalfBlockCell {
     return .{
         .upper = upper,
         .lower = lower,
+    };
+}
+
+/// Map a half-block cell plan to a std-only truecolor cell plan.
+///
+/// The upper pixel becomes the foreground color of the `▀` glyph, and the lower
+/// pixel becomes the background color. Alpha is intentionally preserved on the
+/// original `HalfBlockCell` but ignored here; transparency/compositing policy is
+/// left to a later helper or caller.
+pub fn halfBlockTrueColor(cell: HalfBlockCell) TrueColorCell {
+    return .{
+        .glyph = cell.glyph,
+        .style = .{
+            .fg = cell.upper.rgb,
+            .bg = cell.lower.rgb,
+        },
     };
 }
 
@@ -104,4 +143,35 @@ test "halfBlock preserves alpha for later policy decisions" {
 
     try std.testing.expectEqual(@as(u8, 128), cell.upper.alpha);
     try std.testing.expectEqual(@as(u8, 0), cell.lower.alpha);
+}
+
+test "halfBlockTrueColor maps upper pixel to foreground and lower pixel to background" {
+    const upper = Pixel{ .rgb = .{ .r = 255, .g = 10, .b = 20 } };
+    const lower = Pixel{ .rgb = .{ .r = 30, .g = 40, .b = 255 } };
+    const styled = halfBlockTrueColor(halfBlock(upper, lower));
+
+    try std.testing.expectEqualStrings("▀", styled.glyph);
+    try std.testing.expect(styled.style.fg != null);
+    try std.testing.expect(styled.style.bg != null);
+    try std.testing.expectEqual(@as(u8, 255), styled.style.fg.?.r);
+    try std.testing.expectEqual(@as(u8, 10), styled.style.fg.?.g);
+    try std.testing.expectEqual(@as(u8, 20), styled.style.fg.?.b);
+    try std.testing.expectEqual(@as(u8, 30), styled.style.bg.?.r);
+    try std.testing.expectEqual(@as(u8, 40), styled.style.bg.?.g);
+    try std.testing.expectEqual(@as(u8, 255), styled.style.bg.?.b);
+}
+
+test "halfBlockTrueColor leaves alpha policy outside the style mapping" {
+    const upper = Pixel{
+        .rgb = .{ .r = 1, .g = 2, .b = 3 },
+        .alpha = 0,
+    };
+    const lower = Pixel{
+        .rgb = .{ .r = 4, .g = 5, .b = 6 },
+        .alpha = 128,
+    };
+    const styled = halfBlockTrueColor(halfBlock(upper, lower));
+
+    try std.testing.expectEqual(@as(u8, 1), styled.style.fg.?.r);
+    try std.testing.expectEqual(@as(u8, 4), styled.style.bg.?.r);
 }

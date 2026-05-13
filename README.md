@@ -111,7 +111,10 @@ glyphs because it indexes entries, not raw bytes.
 - `pixel.Rgb`: 8-bit RGB color sample.
 - `pixel.Pixel`: decoded pixel sample with RGB color and 8-bit alpha.
 - `pixel.HalfBlockCell`: std-only half-block render plan for two vertical pixels.
+- `pixel.TrueColorStyle`: std-only foreground/background RGB style plan.
+- `pixel.TrueColorCell`: glyph plus std-only truecolor style plan.
 - `pixel.halfBlock(upper, lower)`: build a half-block render plan.
+- `pixel.halfBlockTrueColor(cell)`: map a half-block plan to a truecolor cell plan.
 
 Pixel input types are std-only data shapes. Decoding, compositing, terminal
 style conversion, and rendering policy are handled by later helpers or callers.
@@ -119,6 +122,10 @@ style conversion, and rendering policy are handled by later helpers or callers.
 `pixel.halfBlock` uses the upper-half block glyph and preserves both input
 pixels. Foreground/background style conversion and alpha policy are handled by
 later helpers.
+
+`pixel.halfBlockTrueColor` maps the upper pixel to foreground and the lower
+pixel to background. It still returns std-only data; Chasen/libvaxis style
+conversion is left to a later adapter.
 
 ## Braille
 
