@@ -44,6 +44,7 @@ Out of scope:
 - `glyph.radio.unselected`: unselected radio marker.
 - `glyph.radio.selected`: selected radio marker.
 - `glyph.spinner.line`: four-frame ASCII line spinner.
+- `glyph.spinner.ascii`: conservative ASCII fallback spinner.
 - `glyph.spinner.dots`: ten-frame Unicode dot spinner.
 - `glyph.spinner.circle`: four-frame Unicode circle spinner.
 
@@ -58,6 +59,7 @@ provide ordered frame labels.
 
 Unicode spinner frames depend on terminal/font support. Use ASCII frame sets
 when a conservative fallback is needed.
+`glyph.spinner.ascii` currently exposes the same frames as `glyph.spinner.line`.
 
 ## Blocks
 

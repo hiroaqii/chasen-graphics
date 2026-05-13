@@ -78,6 +78,8 @@ pub const radio = struct {
 pub const spinner = struct {
     /// Four-frame ASCII line spinner.
     pub const line = [_][]const u8{ "|", "/", "-", "\\" };
+    /// Conservative ASCII fallback spinner frames.
+    pub const ascii = line;
     /// Ten-frame Unicode dot spinner.
     pub const dots = [_][]const u8{ "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" };
     /// Four-frame Unicode circle spinner.
@@ -118,6 +120,13 @@ test "spinner glyphs expose ordered line frames" {
     try std.testing.expectEqualStrings("/", spinner.line[1]);
     try std.testing.expectEqualStrings("-", spinner.line[2]);
     try std.testing.expectEqualStrings("\\", spinner.line[3]);
+}
+
+test "spinner glyphs expose ASCII fallback frames" {
+    try std.testing.expectEqual(spinner.line.len, spinner.ascii.len);
+    for (spinner.line, spinner.ascii) |line_frame, ascii_frame| {
+        try std.testing.expectEqualStrings(line_frame, ascii_frame);
+    }
 }
 
 test "spinner glyphs expose ordered dot frames" {
