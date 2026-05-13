@@ -125,6 +125,7 @@ later helpers.
 - `braille.cols`: number of dot columns in one Braille cell.
 - `braille.rows`: number of dot rows in one Braille cell.
 - `braille.fromDots(mask)`: convert an 8-bit dot mask to a UTF-8 Braille glyph.
+- `braille.dotMask(x, y)`: return the bit mask for a zero-based dot coordinate.
 
 Braille helpers are std-only. They encode dot masks into text glyphs; callers or
 later helpers decide which dots should be active.
