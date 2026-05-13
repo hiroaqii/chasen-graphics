@@ -114,3 +114,24 @@ test "brightnessToGlyph clamps brightness and handles empty input" {
     try std.testing.expectEqualStrings("", brightnessToGlyph(0.5, &.{}));
     try std.testing.expectEqualStrings("", brightnessToGlyph(std.math.nan(f32), &ramp.shade));
 }
+
+test "brightness mapping keeps bucket boundaries stable" {
+    try std.testing.expectEqual(@as(usize, 0), brightnessToIndex(0.099, 10));
+    try std.testing.expectEqual(@as(usize, 1), brightnessToIndex(0.1, 10));
+    try std.testing.expectEqual(@as(usize, 1), brightnessToIndex(0.199, 10));
+    try std.testing.expectEqual(@as(usize, 2), brightnessToIndex(0.2, 10));
+    try std.testing.expectEqual(@as(usize, 8), brightnessToIndex(0.899, 10));
+    try std.testing.expectEqual(@as(usize, 9), brightnessToIndex(0.9, 10));
+    try std.testing.expectEqual(@as(usize, 9), brightnessToIndex(0.999, 10));
+}
+
+test "brightness mapping handles single-entry ramps" {
+    try std.testing.expectEqual(@as(usize, 0), brightnessToIndex(0.0, 1));
+    try std.testing.expectEqual(@as(usize, 0), brightnessToIndex(0.5, 1));
+    try std.testing.expectEqual(@as(usize, 0), brightnessToIndex(1.0, 1));
+
+    const single = [_][]const u8{"@"};
+    try std.testing.expectEqualStrings("@", brightnessToGlyph(0.0, &single));
+    try std.testing.expectEqualStrings("@", brightnessToGlyph(0.5, &single));
+    try std.testing.expectEqualStrings("@", brightnessToGlyph(1.0, &single));
+}
