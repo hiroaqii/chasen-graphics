@@ -106,6 +106,14 @@ ramps, `.len` is the entry count. For UTF-8 entry-array ramps such as
 Pass an entry array to `brightnessToGlyph`. It is safe for multi-byte UTF-8
 glyphs because it indexes entries, not raw bytes.
 
+## Pixel
+
+- `pixel.Rgb`: 8-bit RGB color sample.
+- `pixel.Pixel`: decoded pixel sample with RGB color and 8-bit alpha.
+
+Pixel input types are std-only data shapes. Decoding, compositing, terminal
+style conversion, and rendering policy are handled by later helpers or callers.
+
 ## Development
 
 Run tests:
