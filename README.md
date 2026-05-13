@@ -130,6 +130,12 @@ later helpers.
 Braille helpers are std-only. They encode dot masks into text glyphs; callers or
 later helpers decide which dots should be active.
 
+Run the small Braille mask example:
+
+```sh
+zig build run-braille-mask
+```
+
 ## Development
 
 Run tests:
