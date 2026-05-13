@@ -14,7 +14,7 @@ Initial scope:
 
 - glyph and symbol sets
 - spinner and progress glyph data
-- ASCII brightness ramps
+- ASCII / glyph brightness ramps
 - Braille dot helpers
 - pixel / image fallback helpers
 
@@ -82,13 +82,17 @@ needed in plain text.
 Shade blocks are ordered from lighter to darker. Numeric brightness mapping is
 left to a later helper.
 
-## ASCII
+## ASCII / Ramps
 
 - `ascii.ramp.basic`: basic brightness ramp ordered from darker to brighter.
 - `ascii.ramp.dense`: dense brightness ramp ordered from darker to brighter.
+- `ascii.ramp.shade`: shade/block ramp entries ordered from darker to brighter.
 
 Brightness-to-index mapping is a separate helper; the ramp constants only
 provide reusable ordered character sets.
+
+`ascii.ramp.basic` and `ascii.ramp.dense` are ASCII-only strings. `ascii.ramp.shade`
+is an entry array because it contains multi-byte UTF-8 block glyphs.
 
 ## Development
 
