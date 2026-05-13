@@ -90,6 +90,50 @@ pub fn halfBlockTrueColor(cell: HalfBlockCell) TrueColorCell {
     };
 }
 
+/// Return the nearest color index in `palette` using squared RGB distance.
+///
+/// This is a small fallback helper for renderers that cannot use arbitrary
+/// truecolor values. It intentionally knows nothing about ANSI-256, terminal
+/// themes, or perceptual color spaces; callers provide the palette they want to
+/// target. An empty palette returns `null`.
+pub fn nearestColorIndex(color: Rgb, palette: []const Rgb) ?usize {
+    if (palette.len == 0) return null;
+
+    var best_index: usize = 0;
+    var best_distance = rgbDistanceSquared(color, palette[0]);
+
+    for (palette[1..], 1..) |candidate, index| {
+        const distance = rgbDistanceSquared(color, candidate);
+        if (distance < best_distance) {
+            best_index = index;
+            best_distance = distance;
+        }
+    }
+
+    return best_index;
+}
+
+/// Return the nearest color in `palette` using squared RGB distance.
+///
+/// This is a convenience wrapper around `nearestColorIndex`. Use
+/// `nearestColorIndex` directly when the caller also needs the palette index for
+/// a terminal color table.
+pub fn nearestColor(color: Rgb, palette: []const Rgb) ?Rgb {
+    const index = nearestColorIndex(color, palette) orelse return null;
+    return palette[index];
+}
+
+fn rgbDistanceSquared(a: Rgb, b: Rgb) u32 {
+    const dr = channelDiff(a.r, b.r);
+    const dg = channelDiff(a.g, b.g);
+    const db = channelDiff(a.b, b.b);
+    return dr * dr + dg * dg + db * db;
+}
+
+fn channelDiff(a: u8, b: u8) u32 {
+    return if (a >= b) @as(u32, a - b) else @as(u32, b - a);
+}
+
 test "Rgb stores 8-bit color channels" {
     const color = Rgb{ .r = 10, .g = 20, .b = 30 };
 
@@ -174,4 +218,42 @@ test "halfBlockTrueColor leaves alpha policy outside the style mapping" {
 
     try std.testing.expectEqual(@as(u8, 1), styled.style.fg.?.r);
     try std.testing.expectEqual(@as(u8, 4), styled.style.bg.?.r);
+}
+
+test "nearestColorIndex returns the closest palette entry" {
+    const palette = [_]Rgb{
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 255, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 255, .b = 0 },
+    };
+
+    try std.testing.expectEqual(@as(?usize, 1), nearestColorIndex(.{ .r = 250, .g = 20, .b = 10 }, &palette));
+    try std.testing.expectEqual(@as(?usize, 2), nearestColorIndex(.{ .r = 20, .g = 240, .b = 10 }, &palette));
+}
+
+test "nearestColorIndex keeps the first entry on ties" {
+    const palette = [_]Rgb{
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 10, .g = 0, .b = 0 },
+    };
+
+    try std.testing.expectEqual(@as(?usize, 0), nearestColorIndex(.{ .r = 5, .g = 0, .b = 0 }, &palette));
+}
+
+test "nearestColorIndex returns null for an empty palette" {
+    const palette = [_]Rgb{};
+
+    try std.testing.expectEqual(@as(?usize, null), nearestColorIndex(.{ .r = 1, .g = 2, .b = 3 }, &palette));
+}
+
+test "nearestColor returns the closest palette color" {
+    const palette = [_]Rgb{
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 255 },
+    };
+    const color = nearestColor(.{ .r = 10, .g = 20, .b = 230 }, &palette).?;
+
+    try std.testing.expectEqual(@as(u8, 0), color.r);
+    try std.testing.expectEqual(@as(u8, 0), color.g);
+    try std.testing.expectEqual(@as(u8, 255), color.b);
 }
