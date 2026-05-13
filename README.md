@@ -85,6 +85,7 @@ left to a later helper.
 ## ASCII
 
 - `ascii.ramp.basic`: basic brightness ramp ordered from darker to brighter.
+- `ascii.ramp.dense`: dense brightness ramp ordered from darker to brighter.
 
 Brightness-to-index mapping is a separate helper; the ramp constants only
 provide reusable ordered character sets.
