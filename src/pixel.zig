@@ -281,6 +281,43 @@ test "renderHalfBlockRowTrueColor stops at the shortest slice" {
     try std.testing.expectEqual(@as(u8, 3), out[0].style.bg.?.r);
 }
 
+test "tiny 2x2 image renders to one half-block terminal row" {
+    const image = [_][2]Pixel{
+        .{
+            .{ .rgb = .{ .r = 255, .g = 0, .b = 0 } },
+            .{ .rgb = .{ .r = 0, .g = 255, .b = 0 } },
+        },
+        .{
+            .{ .rgb = .{ .r = 0, .g = 0, .b = 255 } },
+            .{ .rgb = .{ .r = 255, .g = 255, .b = 255 } },
+        },
+    };
+    var out = [_]TrueColorCell{
+        .{ .glyph = "", .style = .{} },
+        .{ .glyph = "", .style = .{} },
+    };
+
+    const count = renderHalfBlockRowTrueColor(&out, &image[0], &image[1]);
+
+    try std.testing.expectEqual(@as(usize, 2), count);
+
+    try std.testing.expectEqualStrings("▀", out[0].glyph);
+    try std.testing.expectEqual(@as(u8, 255), out[0].style.fg.?.r);
+    try std.testing.expectEqual(@as(u8, 0), out[0].style.fg.?.g);
+    try std.testing.expectEqual(@as(u8, 0), out[0].style.fg.?.b);
+    try std.testing.expectEqual(@as(u8, 0), out[0].style.bg.?.r);
+    try std.testing.expectEqual(@as(u8, 0), out[0].style.bg.?.g);
+    try std.testing.expectEqual(@as(u8, 255), out[0].style.bg.?.b);
+
+    try std.testing.expectEqualStrings("▀", out[1].glyph);
+    try std.testing.expectEqual(@as(u8, 0), out[1].style.fg.?.r);
+    try std.testing.expectEqual(@as(u8, 255), out[1].style.fg.?.g);
+    try std.testing.expectEqual(@as(u8, 0), out[1].style.fg.?.b);
+    try std.testing.expectEqual(@as(u8, 255), out[1].style.bg.?.r);
+    try std.testing.expectEqual(@as(u8, 255), out[1].style.bg.?.g);
+    try std.testing.expectEqual(@as(u8, 255), out[1].style.bg.?.b);
+}
+
 test "nearestColorIndex returns the closest palette entry" {
     const palette = [_]Rgb{
         .{ .r = 0, .g = 0, .b = 0 },
