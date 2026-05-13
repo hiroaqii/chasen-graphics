@@ -25,6 +25,32 @@ pub const Pixel = struct {
     alpha: u8 = 255,
 };
 
+/// A terminal-cell-sized half-block render plan for two vertical pixels.
+///
+/// The `glyph` is the upper-half block character. `upper` and `lower` keep the
+/// original pixel samples so later helpers can decide how to convert them to
+/// foreground/background colors or how to treat alpha.
+pub const HalfBlockCell = struct {
+    /// Half-block glyph used to represent two vertical pixels in one cell.
+    glyph: []const u8 = "▀",
+    /// Pixel represented by the upper half of the cell.
+    upper: Pixel,
+    /// Pixel represented by the lower half of the cell.
+    lower: Pixel,
+};
+
+/// Build a half-block cell plan from two vertical pixels.
+///
+/// This function does not composite, blend, or convert colors to terminal
+/// styles. It only preserves the two input samples with the glyph convention
+/// used by later renderers.
+pub fn halfBlock(upper: Pixel, lower: Pixel) HalfBlockCell {
+    return .{
+        .upper = upper,
+        .lower = lower,
+    };
+}
+
 test "Rgb stores 8-bit color channels" {
     const color = Rgb{ .r = 10, .g = 20, .b = 30 };
 
@@ -49,4 +75,33 @@ test "Pixel can represent transparent samples" {
     };
 
     try std.testing.expectEqual(@as(u8, 0), pixel.alpha);
+}
+
+test "halfBlock creates an upper-half render plan" {
+    const upper = Pixel{ .rgb = .{ .r = 255, .g = 0, .b = 0 } };
+    const lower = Pixel{ .rgb = .{ .r = 0, .g = 0, .b = 255 } };
+    const cell = halfBlock(upper, lower);
+
+    try std.testing.expectEqualStrings("▀", cell.glyph);
+    try std.testing.expectEqual(@as(u8, 255), cell.upper.rgb.r);
+    try std.testing.expectEqual(@as(u8, 0), cell.upper.rgb.g);
+    try std.testing.expectEqual(@as(u8, 0), cell.upper.rgb.b);
+    try std.testing.expectEqual(@as(u8, 0), cell.lower.rgb.r);
+    try std.testing.expectEqual(@as(u8, 0), cell.lower.rgb.g);
+    try std.testing.expectEqual(@as(u8, 255), cell.lower.rgb.b);
+}
+
+test "halfBlock preserves alpha for later policy decisions" {
+    const upper = Pixel{
+        .rgb = .{ .r = 1, .g = 2, .b = 3 },
+        .alpha = 128,
+    };
+    const lower = Pixel{
+        .rgb = .{ .r = 4, .g = 5, .b = 6 },
+        .alpha = 0,
+    };
+    const cell = halfBlock(upper, lower);
+
+    try std.testing.expectEqual(@as(u8, 128), cell.upper.alpha);
+    try std.testing.expectEqual(@as(u8, 0), cell.lower.alpha);
 }

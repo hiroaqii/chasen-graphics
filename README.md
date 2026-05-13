@@ -110,9 +110,15 @@ glyphs because it indexes entries, not raw bytes.
 
 - `pixel.Rgb`: 8-bit RGB color sample.
 - `pixel.Pixel`: decoded pixel sample with RGB color and 8-bit alpha.
+- `pixel.HalfBlockCell`: std-only half-block render plan for two vertical pixels.
+- `pixel.halfBlock(upper, lower)`: build a half-block render plan.
 
 Pixel input types are std-only data shapes. Decoding, compositing, terminal
 style conversion, and rendering policy are handled by later helpers or callers.
+
+`pixel.halfBlock` uses the upper-half block glyph and preserves both input
+pixels. Foreground/background style conversion and alpha policy are handled by
+later helpers.
 
 ## Development
 
