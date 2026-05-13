@@ -120,6 +120,15 @@ style conversion, and rendering policy are handled by later helpers or callers.
 pixels. Foreground/background style conversion and alpha policy are handled by
 later helpers.
 
+## Braille
+
+- `braille.cols`: number of dot columns in one Braille cell.
+- `braille.rows`: number of dot rows in one Braille cell.
+- `braille.fromDots(mask)`: convert an 8-bit dot mask to a UTF-8 Braille glyph.
+
+Braille helpers are std-only. They encode dot masks into text glyphs; callers or
+later helpers decide which dots should be active.
+
 ## Development
 
 Run tests:

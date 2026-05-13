@@ -4,6 +4,7 @@ pub const glyph = @import("glyph.zig");
 pub const blocks = @import("blocks.zig");
 pub const ascii = @import("ascii.zig");
 pub const pixel = @import("pixel.zig");
+pub const braille = @import("braille.zig");
 
 /// Package version exposed as a simple smoke-testable value.
 ///
@@ -18,6 +19,7 @@ test "chasen-graphics root imports" {
     try std.testing.expect(@hasDecl(@This(), "blocks"));
     try std.testing.expect(@hasDecl(@This(), "ascii"));
     try std.testing.expect(@hasDecl(@This(), "pixel"));
+    try std.testing.expect(@hasDecl(@This(), "braille"));
 }
 
 test {
