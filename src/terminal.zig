@@ -83,12 +83,63 @@ pub const ImageFallback = enum {
     ascii,
 };
 
+/// Fallback renderers available in the current terminal/app context.
+///
+/// This is not terminal detection. Runtime or adapter code should fill it from
+/// known terminal capabilities, app policy, or the helpers already implemented
+/// by the caller. Image-like fallbacks default to unavailable until a caller
+/// wires the renderer. Text fallback and `none` are treated as always available.
+pub const ImageFallbackSupport = struct {
+    glyph_placeholder: bool = true,
+    pixel_block: bool = false,
+    ascii: bool = false,
+
+    pub fn supports(self: ImageFallbackSupport, fallback: ImageFallback) bool {
+        return switch (fallback) {
+            .none, .text_placeholder => true,
+            .glyph_placeholder => self.glyph_placeholder,
+            .pixel_block => self.pixel_block,
+            .ascii => self.ascii,
+        };
+    }
+};
+
+/// Conservative fallback order for terminals without image protocol support.
+///
+/// Prefer explicit low-resolution image-like renderers when the caller says
+/// they are available, then degrade to a text placeholder, then no image.
+pub const defaultFallbackOrder: []const ImageFallback = &.{
+    .pixel_block,
+    .ascii,
+    .glyph_placeholder,
+    .text_placeholder,
+    .none,
+};
+
+/// Return the first supported fallback from `order`.
+pub fn chooseFallback(support: ImageFallbackSupport, order: []const ImageFallback) ImageFallback {
+    for (order) |fallback| {
+        if (support.supports(fallback)) return fallback;
+    }
+    return .none;
+}
+
 /// Decide whether to use a terminal image protocol or a fallback.
 pub fn placementPlan(capability: ImageCapability, protocol: ImageProtocol, fallback: ImageFallback) PlacementPlan {
     return if (capability.supports(protocol))
         .{ .protocol = protocol }
     else
         .{ .fallback = fallback };
+}
+
+/// Decide whether to use a terminal image protocol or the best supported fallback.
+pub fn placementPlanWithFallbacks(
+    capability: ImageCapability,
+    protocol: ImageProtocol,
+    fallback_support: ImageFallbackSupport,
+    fallback_order: []const ImageFallback,
+) PlacementPlan {
+    return placementPlan(capability, protocol, chooseFallback(fallback_support, fallback_order));
 }
 
 /// Result of choosing between terminal image placement and fallback rendering.
@@ -136,6 +187,67 @@ test "placementPlan selects protocol when capability is available" {
 
 test "placementPlan selects fallback when capability is unavailable" {
     const plan = placementPlan(.{}, .kitty, .glyph_placeholder);
+
+    try std.testing.expectEqual(PlacementPlan{ .fallback = .glyph_placeholder }, plan);
+}
+
+test "ImageFallbackSupport reports available fallback renderers" {
+    const conservative = ImageFallbackSupport{};
+
+    try std.testing.expect(conservative.supports(.none));
+    try std.testing.expect(conservative.supports(.text_placeholder));
+    try std.testing.expect(conservative.supports(.glyph_placeholder));
+    try std.testing.expect(!conservative.supports(.pixel_block));
+    try std.testing.expect(!conservative.supports(.ascii));
+}
+
+test "chooseFallback selects the first supported fallback" {
+    const support = ImageFallbackSupport{
+        .glyph_placeholder = false,
+        .pixel_block = false,
+        .ascii = true,
+    };
+
+    const selected = chooseFallback(support, &.{ .pixel_block, .glyph_placeholder, .ascii, .text_placeholder });
+
+    try std.testing.expectEqual(ImageFallback.ascii, selected);
+}
+
+test "chooseFallback returns none when order is empty" {
+    const selected = chooseFallback(.{}, &.{});
+
+    try std.testing.expectEqual(ImageFallback.none, selected);
+}
+
+test "placementPlanWithFallbacks selects protocol before fallback" {
+    const plan = placementPlanWithFallbacks(
+        .{ .kitty_graphics = true },
+        .kitty,
+        .{},
+        defaultFallbackOrder,
+    );
+
+    try std.testing.expectEqual(PlacementPlan{ .protocol = .kitty }, plan);
+}
+
+test "placementPlanWithFallbacks selects best supported fallback" {
+    const plan = placementPlanWithFallbacks(
+        .{},
+        .kitty,
+        .{ .pixel_block = true },
+        defaultFallbackOrder,
+    );
+
+    try std.testing.expectEqual(PlacementPlan{ .fallback = .pixel_block }, plan);
+}
+
+test "placementPlanWithFallbacks defaults to glyph placeholder when image renderers are unavailable" {
+    const plan = placementPlanWithFallbacks(
+        .{},
+        .kitty,
+        .{},
+        defaultFallbackOrder,
+    );
 
     try std.testing.expectEqual(PlacementPlan{ .fallback = .glyph_placeholder }, plan);
 }
