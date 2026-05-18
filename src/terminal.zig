@@ -9,6 +9,33 @@ pub const ImageProtocol = enum {
     kitty,
 };
 
+/// Kitty Graphics Protocol metadata and convenience helpers.
+///
+/// This does not encode Kitty escape sequences. The terminal backend adapter
+/// should continue to use libvaxis or another backend for actual transmission.
+pub const kitty = struct {
+    pub const protocol: ImageProtocol = .kitty;
+
+    /// Build an image capability snapshot from a known Kitty graphics result.
+    pub fn capability(supported: bool) ImageCapability {
+        return .{ .kitty_graphics = supported };
+    }
+
+    /// Plan Kitty placement using one explicit fallback.
+    pub fn placement(capability_snapshot: ImageCapability, fallback: ImageFallback) PlacementPlan {
+        return placementPlan(capability_snapshot, protocol, fallback);
+    }
+
+    /// Plan Kitty placement using fallback support and caller-provided order.
+    pub fn placementWithFallbacks(
+        capability_snapshot: ImageCapability,
+        fallback_support: ImageFallbackSupport,
+        fallback_order: []const ImageFallback,
+    ) PlacementPlan {
+        return placementPlanWithFallbacks(capability_snapshot, protocol, fallback_support, fallback_order);
+    }
+};
+
 /// Image scaling policy in a terminal-cell destination area.
 ///
 /// The names mirror libvaxis' image scale vocabulary so a later adapter can
@@ -152,8 +179,29 @@ test "ImageCapability reports supported protocols" {
     const unsupported = ImageCapability{};
     try std.testing.expect(!unsupported.supports(.kitty));
 
-    const kitty = ImageCapability{ .kitty_graphics = true };
-    try std.testing.expect(kitty.supports(.kitty));
+    const capability = ImageCapability{ .kitty_graphics = true };
+    try std.testing.expect(capability.supports(.kitty));
+}
+
+test "kitty helper builds capability snapshots" {
+    try std.testing.expect(!kitty.capability(false).supports(.kitty));
+    try std.testing.expect(kitty.capability(true).supports(.kitty));
+}
+
+test "kitty helper plans placement with explicit fallback" {
+    const plan = kitty.placement(kitty.capability(false), .text_placeholder);
+
+    try std.testing.expectEqual(PlacementPlan{ .fallback = .text_placeholder }, plan);
+}
+
+test "kitty helper plans placement with fallback order" {
+    const plan = kitty.placementWithFallbacks(
+        kitty.capability(false),
+        .{ .pixel_block = true },
+        defaultFallbackOrder,
+    );
+
+    try std.testing.expectEqual(PlacementPlan{ .fallback = .pixel_block }, plan);
 }
 
 test "ImagePlacementOptions defaults to unscaled placement" {
