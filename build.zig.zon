@@ -32,6 +32,12 @@
     // Once all dependencies are fetched, `zig build` no longer requires
     // internet connectivity.
     .dependencies = .{
+        // Optional Chasen adapter module. The std-only `chasen_graphics`
+        // module does not depend on Chasen.
+        .chasen = .{
+            .path = "../chasen",
+            .lazy = true,
+        },
         // See `zig fetch --save <url>` for a command-line interface for adding dependencies.
         //.example = .{
         //    // When updating this field to a new URL, be sure to delete the corresponding

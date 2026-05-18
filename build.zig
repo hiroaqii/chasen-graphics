@@ -19,6 +19,30 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
 
+    const chasen_dep = b.lazyDependency("chasen", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const check_chasen_adapter_step = b.step("check-chasen-adapter", "Build the optional Chasen terminal image adapter");
+    if (chasen_dep) |dep| {
+        const chasen_adapter_mod = b.addModule("chasen_graphics_chasen", .{
+            .root_source_file = b.path("src/chasen_adapter.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "chasen", .module = dep.module("chasen") },
+                .{ .name = "chasen_graphics", .module = mod },
+            },
+        });
+
+        const chasen_adapter_tests = b.addTest(.{
+            .root_module = chasen_adapter_mod,
+        });
+        const run_chasen_adapter_tests = b.addRunArtifact(chasen_adapter_tests);
+        check_chasen_adapter_step.dependOn(&run_chasen_adapter_tests.step);
+    }
+
     const braille_mask_example = b.addExecutable(.{
         .name = "braille-mask",
         .root_module = b.createModule(.{
