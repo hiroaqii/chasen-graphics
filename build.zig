@@ -41,6 +41,26 @@ pub fn build(b: *std.Build) void {
         });
         const run_chasen_adapter_tests = b.addRunArtifact(chasen_adapter_tests);
         check_chasen_adapter_step.dependOn(&run_chasen_adapter_tests.step);
+
+        const terminal_image_example = b.addExecutable(.{
+            .name = "terminal-image",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("examples/terminal_image/main.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "chasen", .module = dep.module("chasen") },
+                    .{ .name = "chasen_graphics_chasen", .module = chasen_adapter_mod },
+                },
+            }),
+        });
+
+        const check_terminal_image_step = b.step("check-terminal-image", "Build the terminal image example");
+        check_terminal_image_step.dependOn(&terminal_image_example.step);
+
+        const run_terminal_image = b.addRunArtifact(terminal_image_example);
+        const run_terminal_image_step = b.step("run-terminal-image", "Run the terminal image example");
+        run_terminal_image_step.dependOn(&run_terminal_image.step);
     }
 
     const braille_mask_example = b.addExecutable(.{
