@@ -36,6 +36,23 @@ pub const kitty = struct {
     }
 };
 
+/// tmux escape passthrough helpers.
+///
+/// tmux passthrough wraps a complete terminal escape sequence in DCS
+/// `ESC P tmux; ... ESC \` and doubles every ESC byte inside the payload.
+/// This helper is std-only so runtime adapters can share the same escaping
+/// rule without depending on Chasen or libvaxis internals.
+pub const tmux = struct {
+    pub fn writePassthrough(writer: *std.Io.Writer, sequence: []const u8) std.Io.Writer.Error!void {
+        try writer.writeAll("\x1bPtmux;");
+        for (sequence) |byte| {
+            if (byte == 0x1b) try writer.writeByte(0x1b);
+            try writer.writeByte(byte);
+        }
+        try writer.writeAll("\x1b\\");
+    }
+};
+
 /// Image scaling policy in a terminal-cell destination area.
 ///
 /// The names mirror libvaxis' image scale vocabulary so a later adapter can
@@ -264,6 +281,28 @@ test "kitty helper plans placement with fallback order" {
     );
 
     try std.testing.expectEqual(PlacementPlan{ .fallback = .pixel_block }, plan);
+}
+
+test "tmux passthrough doubles payload ESC bytes" {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try tmux.writePassthrough(&out.writer, "\x1b_Ga=q\x1b\\");
+    const actual = try out.toOwnedSlice();
+    defer std.testing.allocator.free(actual);
+
+    try std.testing.expectEqualStrings("\x1bPtmux;\x1b\x1b_Ga=q\x1b\x1b\\\x1b\\", actual);
+}
+
+test "tmux passthrough allows empty payload" {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try tmux.writePassthrough(&out.writer, "");
+    const actual = try out.toOwnedSlice();
+    defer std.testing.allocator.free(actual);
+
+    try std.testing.expectEqualStrings("\x1bPtmux;\x1b\\", actual);
 }
 
 test "ImagePlacementOptions defaults to unscaled placement" {
