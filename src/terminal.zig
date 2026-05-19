@@ -97,6 +97,64 @@ pub const ImageCapability = struct {
     }
 };
 
+/// Minimal terminal environment signal used by terminal image policy helpers.
+///
+/// `TERM` is deliberately not enough to prove tmux. Prefer `TMUX` /
+/// `TMUX_PANE`, which tmux sets for pane processes. `term` is kept only as
+/// diagnostic context for callers that want to display or log it.
+pub const TerminalEnvironment = struct {
+    tmux: ?[]const u8 = null,
+    tmux_pane: ?[]const u8 = null,
+    term: ?[]const u8 = null,
+
+    pub fn inTmux(self: TerminalEnvironment) bool {
+        _ = self.term;
+        return nonEmpty(self.tmux) or nonEmpty(self.tmux_pane);
+    }
+};
+
+/// Known tmux passthrough setting.
+///
+/// Apps usually cannot know this from environment variables alone. `unknown`
+/// means auto mode may still try tmux passthrough and fall back if transmission
+/// fails.
+pub const TmuxPassthrough = enum {
+    unknown,
+    off,
+    on,
+    all,
+
+    pub fn mayPassThrough(self: TmuxPassthrough) bool {
+        return self != .off;
+    }
+};
+
+/// Transport selected for Kitty image data and placement escape sequences.
+///
+/// `tmux_passthrough_kitty` means both image transmission and later placement
+/// sequences must be wrapped for tmux. Transmitting only the image bytes is not
+/// sufficient because placement is emitted during normal frame rendering.
+pub const KittyTransport = enum {
+    direct_kitty,
+    tmux_passthrough_kitty,
+    unsupported,
+};
+
+/// Choose how Kitty Graphics Protocol should be transported.
+///
+/// Direct capability wins. Inside tmux, a missing direct Kitty capability can
+/// still be usable if tmux passthrough is enabled or unknown and the runtime is
+/// willing to try. The actual escape wrapping belongs to the runtime/adapter.
+pub fn chooseKittyTransport(
+    capability: ImageCapability,
+    environment: TerminalEnvironment,
+    tmux_passthrough: TmuxPassthrough,
+) KittyTransport {
+    if (capability.supports(.kitty)) return .direct_kitty;
+    if (environment.inTmux() and tmux_passthrough.mayPassThrough()) return .tmux_passthrough_kitty;
+    return .unsupported;
+}
+
 /// Fallback rendering policy when a terminal image protocol is unavailable.
 ///
 /// `pixel_block` and `ascii` are stable policy names even though richer fallback
@@ -175,6 +233,10 @@ pub const PlacementPlan = union(enum) {
     fallback: ImageFallback,
 };
 
+fn nonEmpty(value: ?[]const u8) bool {
+    return if (value) |text| text.len > 0 else false;
+}
+
 test "ImageCapability reports supported protocols" {
     const unsupported = ImageCapability{};
     try std.testing.expect(!unsupported.supports(.kitty));
@@ -237,6 +299,42 @@ test "placementPlan selects fallback when capability is unavailable" {
     const plan = placementPlan(.{}, .kitty, .glyph_placeholder);
 
     try std.testing.expectEqual(PlacementPlan{ .fallback = .glyph_placeholder }, plan);
+}
+
+test "TerminalEnvironment detects tmux from tmux variables" {
+    try std.testing.expect(!(TerminalEnvironment{ .term = "tmux-256color" }).inTmux());
+    try std.testing.expect((TerminalEnvironment{ .tmux = "/tmp/tmux-1000/default,1,0" }).inTmux());
+    try std.testing.expect((TerminalEnvironment{ .tmux_pane = "%1" }).inTmux());
+}
+
+test "chooseKittyTransport prefers direct Kitty capability" {
+    const transport = chooseKittyTransport(
+        .{ .kitty_graphics = true },
+        .{ .tmux = "/tmp/tmux-1000/default,1,0" },
+        .off,
+    );
+
+    try std.testing.expectEqual(KittyTransport.direct_kitty, transport);
+}
+
+test "chooseKittyTransport selects tmux passthrough when direct capability is missing" {
+    const transport = chooseKittyTransport(
+        .{},
+        .{ .tmux_pane = "%1" },
+        .unknown,
+    );
+
+    try std.testing.expectEqual(KittyTransport.tmux_passthrough_kitty, transport);
+}
+
+test "chooseKittyTransport rejects tmux passthrough when known off" {
+    const transport = chooseKittyTransport(
+        .{},
+        .{ .tmux_pane = "%1" },
+        .off,
+    );
+
+    try std.testing.expectEqual(KittyTransport.unsupported, transport);
 }
 
 test "ImageFallbackSupport reports available fallback renderers" {
