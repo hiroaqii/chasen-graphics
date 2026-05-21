@@ -38,9 +38,9 @@ const TerminalImageExample = struct {
     pub fn view(self: *const TerminalImageExample, sfc: *chasen.Surface) !void {
         sfc.clearAll();
 
-        _ = sfc.textAt(0, 0, "Terminal Image Example", .{ .bold = true });
-        _ = sfc.textAt(0, 1, "q: quit", .{ .fg = .gray });
-        _ = sfc.textAt(0, 3, "This wires chasen_graphics_chasen.pngPathLoader into chasen.runWith.", .{});
+        _ = sfc.borrowTextAt(0, 0, "Terminal Image Example", .{ .bold = true });
+        _ = sfc.borrowTextAt(0, 1, "q: quit", .{ .fg = .gray });
+        _ = sfc.borrowTextAt(0, 3, "This wires chasen_graphics_chasen.pngPathLoader into chasen.runWith.", .{});
 
         const size = sfc.size();
         const image_area = chasen.Rect{
@@ -57,7 +57,7 @@ const TerminalImageExample = struct {
             // image, so the dotted placeholder is only used before load/error.
             image_surface.clearAll();
             try image_surface.drawTerminalImage(handle, .{ .fit = .fit, .z_index = 1 });
-            _ = sfc.textAt(0, 4, "Loaded PNG through the optional Chasen adapter.", .{ .fg = .{ .index = 2 } });
+            _ = sfc.borrowTextAt(0, 4, "Loaded PNG through the optional Chasen adapter.", .{ .fg = .{ .index = 2 } });
         } else if (self.load_error) |reason| {
             sfc.fill(image_area, .{
                 .char = .{ .grapheme = ".", .width = 1 },
@@ -68,13 +68,13 @@ const TerminalImageExample = struct {
                 .load_failed => "Could not load or transmit the PNG image.",
                 .registry_full => "Image registry is full.",
             };
-            _ = sfc.textAt(0, 4, label, .{ .fg = .{ .index = 1 } });
+            _ = sfc.borrowTextAt(0, 4, label, .{ .fg = .{ .index = 1 } });
         } else {
             sfc.fill(image_area, .{
                 .char = .{ .grapheme = ".", .width = 1 },
                 .style = .{ .dim = true },
             });
-            _ = sfc.textAt(0, 4, "Loading PNG image...", .{ .fg = .gray });
+            _ = sfc.borrowTextAt(0, 4, "Loading PNG image...", .{ .fg = .gray });
         }
     }
 
