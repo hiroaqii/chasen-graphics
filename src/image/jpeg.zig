@@ -171,6 +171,81 @@ const EntropyBitReader = struct {
     }
 };
 
+const Block = [64]i16;
+
+fn decodeMagnitude(value: u16, size: u4) !i16 {
+    if (size == 0) return 0;
+    if (size > 11) return error.UnsupportedJpeg;
+    const threshold = @as(u16, 1) << (size - 1);
+    if (value >= threshold) return @intCast(value);
+
+    const extend = @as(i32, value) + 1 - (@as(i32, 1) << size);
+    return @intCast(extend);
+}
+
+fn readMagnitude(reader: *EntropyBitReader, size: u4) !i16 {
+    if (size == 0) return 0;
+    return decodeMagnitude(try reader.readBits(size), size);
+}
+
+fn decodeBlock(
+    reader: *EntropyBitReader,
+    dc_table: *const CanonicalHuffmanTable,
+    ac_table: *const CanonicalHuffmanTable,
+    previous_dc: *i16,
+) !Block {
+    var block = [_]i16{0} ** 64;
+
+    const dc_size_raw = try dc_table.decode(reader);
+    if (dc_size_raw > 11) return error.InvalidJpeg;
+    const dc_size: u4 = @intCast(dc_size_raw);
+    const dc_delta = try readMagnitude(reader, dc_size);
+    const dc_value = try addI16(previous_dc.*, dc_delta);
+    block[0] = dc_value;
+    previous_dc.* = dc_value;
+
+    var index: usize = 1;
+    while (index < 64) {
+        const symbol = try ac_table.decode(reader);
+        if (symbol == 0x00) break;
+        if (symbol == 0xf0) {
+            index += 16;
+            if (index > 64) return error.InvalidJpeg;
+            continue;
+        }
+
+        const run = symbol >> 4;
+        const size_raw = symbol & 0x0f;
+        if (size_raw == 0) return error.InvalidJpeg;
+        if (size_raw > 10) return error.InvalidJpeg;
+        index += run;
+        if (index >= 64) return error.InvalidJpeg;
+
+        const size: u4 = @intCast(size_raw);
+        block[zigzag_order[index]] = try readMagnitude(reader, size);
+        index += 1;
+    }
+
+    return block;
+}
+
+fn addI16(a: i16, b: i16) !i16 {
+    const sum = @as(i32, a) + @as(i32, b);
+    if (sum < std.math.minInt(i16) or sum > std.math.maxInt(i16)) return error.InvalidJpeg;
+    return @intCast(sum);
+}
+
+const zigzag_order = [_]usize{
+    0,  1,  8,  16, 9,  2,  3,  10,
+    17, 24, 32, 25, 18, 11, 4,  5,
+    12, 19, 26, 33, 40, 48, 41, 34,
+    27, 20, 13, 6,  7,  14, 21, 28,
+    35, 42, 49, 56, 57, 50, 43, 36,
+    29, 22, 15, 23, 30, 37, 44, 51,
+    58, 59, 52, 45, 38, 31, 39, 46,
+    53, 60, 61, 54, 47, 55, 62, 63,
+};
+
 /// Parse JPEG dimensions and frame metadata from encoded bytes.
 ///
 /// This does not entropy-decode image data. It only walks marker segments until
@@ -791,4 +866,117 @@ test "JPEG entropy bit reader rejects restart markers for this slice" {
     var reader = EntropyBitReader.init(&[_]u8{ 0xff, 0xd0 });
 
     try std.testing.expectError(error.UnsupportedJpeg, reader.readBit());
+}
+
+test "JPEG magnitude decode sign-extends category values" {
+    try std.testing.expectEqual(@as(i16, 1), try decodeMagnitude(0b1, 1));
+    try std.testing.expectEqual(@as(i16, -1), try decodeMagnitude(0b0, 1));
+    try std.testing.expectEqual(@as(i16, 3), try decodeMagnitude(0b11, 2));
+    try std.testing.expectEqual(@as(i16, -3), try decodeMagnitude(0b00, 2));
+    try std.testing.expectEqual(@as(i16, -2), try decodeMagnitude(0b01, 2));
+}
+
+test "JPEG block decoder reads DC and AC coefficients" {
+    const dc_table = try CanonicalHuffmanTable.init(.{
+        .class = .dc,
+        .id = 0,
+        .code_counts = .{
+            1, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+        },
+        .symbols = .{2} ++ ([_]u8{0} ** 255),
+        .symbol_count = 1,
+    });
+    const ac_table = try CanonicalHuffmanTable.init(.{
+        .class = .ac,
+        .id = 0,
+        .code_counts = .{
+            2, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+        },
+        .symbols = .{ 0x01, 0x00 } ++ ([_]u8{0} ** 254),
+        .symbol_count = 2,
+    });
+    var reader = EntropyBitReader.init(&[_]u8{0b0110_1100});
+    var previous_dc: i16 = 4;
+
+    const block = try decodeBlock(&reader, &dc_table, &ac_table, &previous_dc);
+
+    try std.testing.expectEqual(@as(i16, 7), block[0]);
+    try std.testing.expectEqual(@as(i16, 1), block[1]);
+    try std.testing.expectEqual(@as(i16, 7), previous_dc);
+    try std.testing.expectEqual(@as(i16, 0), block[2]);
+}
+
+test "JPEG block decoder applies AC run length with zigzag order" {
+    const dc_table = try CanonicalHuffmanTable.init(.{
+        .class = .dc,
+        .id = 0,
+        .code_counts = .{
+            1, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+        },
+        .symbols = .{0} ++ ([_]u8{0} ** 255),
+        .symbol_count = 1,
+    });
+    const ac_table = try CanonicalHuffmanTable.init(.{
+        .class = .ac,
+        .id = 0,
+        .code_counts = .{
+            2, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+        },
+        .symbols = .{ 0x21, 0x00 } ++ ([_]u8{0} ** 254),
+        .symbol_count = 2,
+    });
+    var reader = EntropyBitReader.init(&[_]u8{0b0011_0000});
+    var previous_dc: i16 = 0;
+
+    const block = try decodeBlock(&reader, &dc_table, &ac_table, &previous_dc);
+
+    try std.testing.expectEqual(@as(i16, 1), block[16]);
+    try std.testing.expectEqual(@as(i16, 0), block[1]);
+    try std.testing.expectEqual(@as(i16, 0), block[8]);
+}
+
+test "JPEG block decoder rejects AC category above baseline limit" {
+    const dc_table = try CanonicalHuffmanTable.init(.{
+        .class = .dc,
+        .id = 0,
+        .code_counts = .{
+            1, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+        },
+        .symbols = .{0} ++ ([_]u8{0} ** 255),
+        .symbol_count = 1,
+    });
+    const ac_table = try CanonicalHuffmanTable.init(.{
+        .class = .ac,
+        .id = 0,
+        .code_counts = .{
+            2, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+        },
+        .symbols = .{ 0x0b, 0x00 } ++ ([_]u8{0} ** 254),
+        .symbol_count = 2,
+    });
+    var reader = EntropyBitReader.init(&[_]u8{0b0000_0000});
+    var previous_dc: i16 = 0;
+
+    try std.testing.expectError(
+        error.InvalidJpeg,
+        decodeBlock(&reader, &dc_table, &ac_table, &previous_dc),
+    );
 }
