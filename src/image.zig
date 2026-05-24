@@ -144,6 +144,32 @@ pub fn pngInfo(bytes: []const u8) !PngInfo {
     return (try parsePngHeader(bytes)).info;
 }
 
+/// Detect the source image format from encoded bytes.
+///
+/// This is intentionally a lightweight magic-byte check, not a full validator.
+/// Decoders still validate their own container structure.
+pub fn detectSourceFormat(bytes: []const u8) SourceFormat {
+    if (bytes.len >= png_signature.len and std.mem.eql(u8, bytes[0..png_signature.len], &png_signature))
+        return .png;
+    if (bytes.len >= 3 and bytes[0] == 0xff and bytes[1] == 0xd8 and bytes[2] == 0xff)
+        return .jpeg;
+    if (bytes.len >= 12 and std.mem.eql(u8, bytes[0..4], "RIFF") and std.mem.eql(u8, bytes[8..12], "WEBP"))
+        return .webp;
+    return .unknown;
+}
+
+/// Decode encoded image bytes into `DecodedImage`.
+///
+/// PNG is the only implemented decoder in the first image pipeline slice.
+/// Other recognized formats return `UnsupportedImageFormat` until their
+/// decoder is intentionally added.
+pub fn decodeImage(allocator: std.mem.Allocator, bytes: []const u8) !DecodedImage {
+    return switch (detectSourceFormat(bytes)) {
+        .png => decodePng(allocator, bytes),
+        .jpeg, .webp, .unknown => error.UnsupportedImageFormat,
+    };
+}
+
 /// Decode a small baseline subset of PNG into `DecodedImage`.
 ///
 /// Supported first slice:
@@ -570,6 +596,24 @@ test "pngInfo rejects invalid IHDR CRC" {
     try std.testing.expectError(error.InvalidPng, pngInfo(&bytes));
 }
 
+test "detectSourceFormat recognizes common image containers" {
+    const png_bytes = [_]u8{ 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n' };
+    const jpeg_bytes = [_]u8{ 0xff, 0xd8, 0xff, 0xe0 };
+    const webp_bytes = [_]u8{ 'R', 'I', 'F', 'F', 1, 0, 0, 0, 'W', 'E', 'B', 'P' };
+    const unknown_bytes = [_]u8{ 'n', 'o', 'p', 'e' };
+
+    try std.testing.expectEqual(SourceFormat.png, detectSourceFormat(&png_bytes));
+    try std.testing.expectEqual(SourceFormat.jpeg, detectSourceFormat(&jpeg_bytes));
+    try std.testing.expectEqual(SourceFormat.webp, detectSourceFormat(&webp_bytes));
+    try std.testing.expectEqual(SourceFormat.unknown, detectSourceFormat(&unknown_bytes));
+}
+
+test "decodeImage rejects unsupported formats" {
+    const jpeg_bytes = [_]u8{ 0xff, 0xd8, 0xff, 0xe0 };
+
+    try std.testing.expectError(error.UnsupportedImageFormat, decodeImage(std.testing.allocator, &jpeg_bytes));
+}
+
 test "decodePng decodes RGBA8 pixels" {
     const bytes = [_]u8{
         0x89, 'P',  'N',  'G',  '\r', '\n', 0x1a, '\n',
@@ -594,6 +638,26 @@ test "decodePng decodes RGBA8 pixels" {
     try std.testing.expectEqual(@as(u8, 0), value.rgb.b);
     try std.testing.expectEqual(@as(u8, 255), value.alpha);
     try std.testing.expect(image.orientation_applied);
+}
+
+test "decodeImage dispatches PNG bytes" {
+    const bytes = [_]u8{
+        0x89, 'P',  'N',  'G',  '\r', '\n', 0x1a, '\n',
+        0x00, 0x00, 0x00, 0x0d, 'I',  'H',  'D',  'R',
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+        0x08, 0x06, 0x00, 0x00, 0x00, 31,   21,   196,
+        137,  0x00, 0x00, 0x00, 0x0d, 'I',  'D',  'A',
+        'T',  120,  156,  99,   248,  207,  192,  240,
+        31,   0,    5,    0,    1,    255,  137,  153,
+        61,   29,   0x00, 0x00, 0x00, 0x00, 'I',  'E',
+        'N',  'D',  174,  66,   96,   130,
+    };
+
+    var image = try decodeImage(std.testing.allocator, &bytes);
+    defer image.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(SourceFormat.png, image.source_format);
+    try std.testing.expectEqual(@as(u8, 255), image.pixelAt(0, 0).?.rgb.r);
 }
 
 test "decodePng rejects extra decompressed bytes" {
