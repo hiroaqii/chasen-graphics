@@ -47,6 +47,20 @@ pub const PngColorType = enum(u8) {
     rgba = 6,
 };
 
+/// Basic JPEG metadata read from the first Start Of Frame marker.
+pub const JpegInfo = struct {
+    dimensions: Dimensions,
+    precision: u8,
+    component_count: u8,
+    frame: JpegFrameKind,
+};
+
+pub const JpegFrameKind = enum {
+    baseline,
+    progressive,
+    other,
+};
+
 /// Fit mode used when resizing an image into a target rectangle.
 pub const FitMode = enum {
     /// Preserve aspect ratio and fit fully inside the target size.
@@ -142,6 +156,38 @@ const PngHeader = struct {
 /// IHDR width and height. It does not inflate IDAT chunks or produce pixels.
 pub fn pngInfo(bytes: []const u8) !PngInfo {
     return (try parsePngHeader(bytes)).info;
+}
+
+/// Parse JPEG dimensions and frame metadata from encoded bytes.
+///
+/// This does not entropy-decode image data. It only walks marker segments until
+/// the first Start Of Frame marker that carries dimensions.
+pub fn jpegInfo(bytes: []const u8) !JpegInfo {
+    if (bytes.len < 4) return error.InvalidJpeg;
+    if (bytes[0] != 0xff or bytes[1] != 0xd8) return error.InvalidJpeg;
+
+    var offset: usize = 2;
+    while (try nextJpegSegment(bytes, &offset)) |segment| {
+        if (isJpegStartOfFrame(segment.marker)) {
+            if (segment.data.len < 6) return error.InvalidJpeg;
+            const precision = segment.data[0];
+            const height = std.mem.readInt(u16, segment.data[1..3], .big);
+            const width = std.mem.readInt(u16, segment.data[3..5], .big);
+            const component_count = segment.data[5];
+            if (width == 0 or height == 0 or component_count == 0) return error.InvalidJpeg;
+            const expected_len = 6 + 3 * @as(usize, component_count);
+            if (segment.data.len < expected_len) return error.InvalidJpeg;
+
+            return .{
+                .dimensions = .{ .width = width, .height = height },
+                .precision = precision,
+                .component_count = component_count,
+                .frame = jpegFrameKind(segment.marker),
+            };
+        }
+    }
+
+    return error.InvalidJpeg;
 }
 
 /// Detect the source image format from encoded bytes.
@@ -331,6 +377,64 @@ fn pixelCount(width: u32, height: u32) !usize {
     const count = @as(u64, width) * @as(u64, height);
     if (count > std.math.maxInt(usize)) return error.ImageTooLarge;
     return @intCast(count);
+}
+
+const JpegSegment = struct {
+    marker: u8,
+    data: []const u8,
+};
+
+fn nextJpegSegment(bytes: []const u8, offset: *usize) !?JpegSegment {
+    while (offset.* < bytes.len and bytes[offset.*] != 0xff) {
+        offset.* += 1;
+    }
+    if (offset.* >= bytes.len) return null;
+
+    while (offset.* < bytes.len and bytes[offset.*] == 0xff) {
+        offset.* += 1;
+    }
+    if (offset.* >= bytes.len) return error.InvalidJpeg;
+
+    const marker = bytes[offset.*];
+    offset.* += 1;
+
+    if (marker == 0x00) return error.InvalidJpeg;
+    if (marker == 0xd9) return null;
+    if (marker == 0xda) return error.InvalidJpeg;
+    if (isJpegStandaloneMarker(marker)) {
+        return .{ .marker = marker, .data = &.{} };
+    }
+
+    if (offset.* + 2 > bytes.len) return error.InvalidJpeg;
+    const segment_len = std.mem.readInt(u16, bytes[offset.*..][0..2], .big);
+    if (segment_len < 2) return error.InvalidJpeg;
+
+    const data_start = offset.* + 2;
+    const data_len = @as(usize, segment_len) - 2;
+    const data_end = try std.math.add(usize, data_start, data_len);
+    if (data_end > bytes.len) return error.InvalidJpeg;
+
+    offset.* = data_end;
+    return .{ .marker = marker, .data = bytes[data_start..data_end] };
+}
+
+fn isJpegStandaloneMarker(marker: u8) bool {
+    return marker == 0x01 or (marker >= 0xd0 and marker <= 0xd7);
+}
+
+fn isJpegStartOfFrame(marker: u8) bool {
+    return switch (marker) {
+        0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf => true,
+        else => false,
+    };
+}
+
+fn jpegFrameKind(marker: u8) JpegFrameKind {
+    return switch (marker) {
+        0xc0 => .baseline,
+        0xc2 => .progressive,
+        else => .other,
+    };
 }
 
 fn parsePngHeader(bytes: []const u8) !PngHeader {
@@ -594,6 +698,76 @@ test "pngInfo rejects invalid IHDR CRC" {
     };
 
     try std.testing.expectError(error.InvalidPng, pngInfo(&bytes));
+}
+
+test "jpegInfo reads SOF dimensions" {
+    const bytes = [_]u8{
+        0xff, 0xd8,
+        0xff, 0xe0,
+        0x00, 0x10,
+        'J',  'F',
+        'I',  'F',
+        0x00, 0x01,
+        0x01, 0x00,
+        0x00, 0x01,
+        0x00, 0x01,
+        0x00, 0x00,
+        0xff, 0xc0,
+        0x00, 0x11,
+        0x08, 0x00,
+        0xf0, 0x01,
+        0x40, 0x03,
+        0x01, 0x11,
+        0x00, 0x02,
+        0x11, 0x00,
+        0x03, 0x11,
+        0x00, 0xff,
+        0xd9,
+    };
+
+    const info = try jpegInfo(&bytes);
+
+    try std.testing.expectEqual(Dimensions{ .width = 320, .height = 240 }, info.dimensions);
+    try std.testing.expectEqual(@as(u8, 8), info.precision);
+    try std.testing.expectEqual(@as(u8, 3), info.component_count);
+    try std.testing.expectEqual(JpegFrameKind.baseline, info.frame);
+}
+
+test "jpegInfo rejects non-JPEG data" {
+    const bytes = [_]u8{ 'n', 'o', 't', ' ', 'j', 'p', 'e', 'g' };
+
+    try std.testing.expectError(error.InvalidJpeg, jpegInfo(&bytes));
+}
+
+test "jpegInfo rejects JPEG without SOF metadata" {
+    const bytes = [_]u8{ 0xff, 0xd8, 0xff, 0xd9 };
+
+    try std.testing.expectError(error.InvalidJpeg, jpegInfo(&bytes));
+}
+
+test "jpegInfo rejects truncated marker segment" {
+    const bytes = [_]u8{
+        0xff, 0xd8,
+        0xff, 0xe0,
+        0x00, 0x10,
+        'J',  'F',
+    };
+
+    try std.testing.expectError(error.InvalidJpeg, jpegInfo(&bytes));
+}
+
+test "jpegInfo rejects incomplete SOF component specs" {
+    const bytes = [_]u8{
+        0xff, 0xd8,
+        0xff, 0xc0,
+        0x00, 0x08,
+        0x08, 0x00,
+        0xf0, 0x01,
+        0x40, 0x03,
+        0xff, 0xd9,
+    };
+
+    try std.testing.expectError(error.InvalidJpeg, jpegInfo(&bytes));
 }
 
 test "detectSourceFormat recognizes common image containers" {
