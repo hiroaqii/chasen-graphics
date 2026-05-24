@@ -69,6 +69,108 @@ const DecodeState = struct {
     scan_data_offset: usize = 0,
 };
 
+const HuffmanCode = struct {
+    code: u16,
+    length: u5,
+    symbol: u8,
+};
+
+const CanonicalHuffmanTable = struct {
+    codes: [256]HuffmanCode = undefined,
+    count: usize = 0,
+
+    fn init(table: HuffmanTable) !CanonicalHuffmanTable {
+        var result = CanonicalHuffmanTable{};
+        var code: u32 = 0;
+        var symbol_index: usize = 0;
+
+        for (table.code_counts, 0..) |code_count, length_index| {
+            code <<= 1;
+            const length: u5 = @intCast(length_index + 1);
+            const max_code_for_length = @as(u32, 1) << length;
+            if (code + code_count > max_code_for_length) return error.InvalidJpeg;
+
+            for (0..code_count) |_| {
+                if (symbol_index >= table.symbol_count) return error.InvalidJpeg;
+                result.codes[result.count] = .{
+                    .code = @intCast(code),
+                    .length = length,
+                    .symbol = table.symbols[symbol_index],
+                };
+                result.count += 1;
+                symbol_index += 1;
+                code += 1;
+            }
+        }
+
+        if (symbol_index != table.symbol_count) return error.InvalidJpeg;
+        return result;
+    }
+
+    fn decode(self: *const CanonicalHuffmanTable, reader: *EntropyBitReader) !u8 {
+        var code: u16 = 0;
+        for (1..17) |length_usize| {
+            const bit = try reader.readBit();
+            code = (code << 1) | bit;
+            const length: u5 = @intCast(length_usize);
+
+            for (self.codes[0..self.count]) |entry| {
+                if (entry.length == length and entry.code == code) return entry.symbol;
+            }
+        }
+
+        return error.InvalidJpeg;
+    }
+};
+
+const EntropyBitReader = struct {
+    data: []const u8,
+    offset: usize = 0,
+    current_byte: u8 = 0,
+    bits_left: u4 = 0,
+
+    fn init(data: []const u8) EntropyBitReader {
+        return .{ .data = data };
+    }
+
+    fn readBit(self: *EntropyBitReader) !u1 {
+        if (self.bits_left == 0) {
+            self.current_byte = try self.nextByte();
+            self.bits_left = 8;
+        }
+
+        self.bits_left -= 1;
+        const shift: u3 = @intCast(self.bits_left);
+        return @intCast((self.current_byte >> shift) & 1);
+    }
+
+    fn readBits(self: *EntropyBitReader, count: u4) !u16 {
+        if (count > 16) return error.InvalidJpeg;
+        var value: u16 = 0;
+        for (0..count) |_| {
+            value = (value << 1) | try self.readBit();
+        }
+        return value;
+    }
+
+    fn nextByte(self: *EntropyBitReader) !u8 {
+        if (self.offset >= self.data.len) return error.InvalidJpeg;
+        const byte = self.data[self.offset];
+        self.offset += 1;
+        if (byte != 0xff) return byte;
+
+        if (self.offset >= self.data.len) return error.InvalidJpeg;
+        const marker = self.data[self.offset];
+        if (marker == 0x00) {
+            self.offset += 1;
+            return 0xff;
+        }
+        if (marker >= 0xd0 and marker <= 0xd7) return error.UnsupportedJpeg;
+        if (marker == 0xd9) return error.InvalidJpeg;
+        return error.InvalidJpeg;
+    }
+};
+
 /// Parse JPEG dimensions and frame metadata from encoded bytes.
 ///
 /// This does not entropy-decode image data. It only walks marker segments until
@@ -638,4 +740,55 @@ test "JPEG parser state rejects out-of-range SOS table ids" {
     };
 
     try std.testing.expectError(error.UnsupportedJpeg, parseDecodeState(&bytes));
+}
+
+test "JPEG canonical Huffman table decodes symbols from entropy bits" {
+    const table = HuffmanTable{
+        .class = .dc,
+        .id = 0,
+        .code_counts = .{
+            1, 2, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+        },
+        .symbols = .{ 0xaa, 0xbb, 0xcc } ++ ([_]u8{0} ** 253),
+        .symbol_count = 3,
+    };
+    const canonical = try CanonicalHuffmanTable.init(table);
+    var reader = EntropyBitReader.init(&[_]u8{0b0101_1000});
+
+    try std.testing.expectEqual(@as(u8, 0xaa), try canonical.decode(&reader));
+    try std.testing.expectEqual(@as(u8, 0xbb), try canonical.decode(&reader));
+    try std.testing.expectEqual(@as(u8, 0xcc), try canonical.decode(&reader));
+}
+
+test "JPEG canonical Huffman table rejects over-subscribed lengths" {
+    const table = HuffmanTable{
+        .class = .ac,
+        .id = 0,
+        .code_counts = .{
+            3, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+        },
+        .symbols = .{ 1, 2, 3 } ++ ([_]u8{0} ** 253),
+        .symbol_count = 3,
+    };
+
+    try std.testing.expectError(error.InvalidJpeg, CanonicalHuffmanTable.init(table));
+}
+
+test "JPEG entropy bit reader handles byte stuffing" {
+    var reader = EntropyBitReader.init(&[_]u8{ 0xff, 0x00, 0x80 });
+
+    try std.testing.expectEqual(@as(u16, 0xff), try reader.readBits(8));
+    try std.testing.expectEqual(@as(u1, 1), try reader.readBit());
+}
+
+test "JPEG entropy bit reader rejects restart markers for this slice" {
+    var reader = EntropyBitReader.init(&[_]u8{ 0xff, 0xd0 });
+
+    try std.testing.expectError(error.UnsupportedJpeg, reader.readBit());
 }
