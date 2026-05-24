@@ -1,6 +1,8 @@
 const std = @import("std");
 const pixel = @import("pixel.zig");
 
+pub const png_signature = [_]u8{ 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n' };
+
 /// Original image container format before decode.
 ///
 /// This is metadata about the source. Decoded image pixels currently use
@@ -23,6 +25,15 @@ pub const PixelFormat = enum {
 pub const Dimensions = struct {
     width: u32,
     height: u32,
+};
+
+/// Basic PNG metadata read from the file header.
+///
+/// This is intentionally not a PNG decoder. It keeps the encoded-byte path
+/// separate from `DecodedImage` while giving terminal adapters dimensions for
+/// pre-encoded PNG transmission.
+pub const PngInfo = struct {
+    dimensions: Dimensions,
 };
 
 /// Fit mode used when resizing an image into a target rectangle.
@@ -100,6 +111,24 @@ pub const DecodedImage = struct {
         self.pixels[@as(usize, y) * @as(usize, self.width) + @as(usize, x)] = value;
     }
 };
+
+/// Parse PNG header metadata from encoded bytes.
+///
+/// The function validates the PNG signature and IHDR location, then reads the
+/// IHDR width and height. It does not inflate IDAT chunks or produce pixels.
+pub fn pngInfo(bytes: []const u8) !PngInfo {
+    if (bytes.len < 24) return error.InvalidPng;
+    if (!std.mem.eql(u8, bytes[0..8], &png_signature)) return error.InvalidPng;
+    const ihdr_len = std.mem.readInt(u32, bytes[8..12], .big);
+    if (ihdr_len != 13) return error.InvalidPng;
+    if (!std.mem.eql(u8, bytes[12..16], "IHDR")) return error.InvalidPng;
+
+    const width = std.mem.readInt(u32, bytes[16..20], .big);
+    const height = std.mem.readInt(u32, bytes[20..24], .big);
+    if (width == 0 or height == 0) return error.InvalidPng;
+
+    return .{ .dimensions = .{ .width = width, .height = height } };
+}
 
 /// Return the pixel dimensions produced by a resize request.
 pub fn fittedDimensions(source: Dimensions, options: ResizeOptions) !Dimensions {
@@ -193,6 +222,34 @@ test "DecodedImage owns a row-major pixel buffer" {
     try std.testing.expectEqual(SourceFormat.png, image.source_format);
     try std.testing.expectEqual(@as(u8, 255), image.pixelAt(1, 1).?.rgb.r);
     try std.testing.expect(image.pixelAt(2, 1) == null);
+}
+
+test "pngInfo reads IHDR width and height" {
+    const bytes = [_]u8{
+        0x89, 'P',  'N',  'G',  '\r', '\n', 0x1a, '\n',
+        0x00, 0x00, 0x00, 0x0d, 'I',  'H',  'D',  'R',
+        0x00, 0x00, 0x01, 0x40, 0x00, 0x00, 0x00, 0xf0,
+    };
+
+    const info = try pngInfo(&bytes);
+
+    try std.testing.expectEqual(Dimensions{ .width = 320, .height = 240 }, info.dimensions);
+}
+
+test "pngInfo rejects non-PNG data" {
+    const bytes = [_]u8{ 'n', 'o', 't', ' ', 'p', 'n', 'g' };
+
+    try std.testing.expectError(error.InvalidPng, pngInfo(&bytes));
+}
+
+test "pngInfo rejects invalid IHDR length" {
+    const bytes = [_]u8{
+        0x89, 'P',  'N',  'G',  '\r', '\n', 0x1a, '\n',
+        0x00, 0x00, 0x00, 0x0c, 'I',  'H',  'D',  'R',
+        0x00, 0x00, 0x01, 0x40, 0x00, 0x00, 0x00, 0xf0,
+    };
+
+    try std.testing.expectError(error.InvalidPng, pngInfo(&bytes));
 }
 
 test "fittedDimensions contain preserves aspect ratio" {
