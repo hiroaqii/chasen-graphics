@@ -69,6 +69,14 @@ pub const ResizeOptions = struct {
     allow_upscale: bool = false,
 };
 
+/// Pixel-space rectangle used when cropping a decoded image.
+pub const CropRect = struct {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+};
+
 /// Owned decoded image buffer.
 ///
 /// The buffer uses row-major order and one `pixel.Pixel` per pixel. Callers own
@@ -213,6 +221,51 @@ pub fn resizeNearest(
     }
 
     return out;
+}
+
+/// Copy a rectangular region into a new owned image.
+pub fn crop(
+    allocator: std.mem.Allocator,
+    source: *const DecodedImage,
+    rect: CropRect,
+) !DecodedImage {
+    if (rect.width == 0 or rect.height == 0) return error.InvalidDimensions;
+    const right = std.math.add(u32, rect.x, rect.width) catch return error.InvalidCrop;
+    const bottom = std.math.add(u32, rect.y, rect.height) catch return error.InvalidCrop;
+    if (right > source.width or bottom > source.height) return error.InvalidCrop;
+
+    var out = try DecodedImage.init(allocator, rect.width, rect.height, source.source_format);
+    errdefer out.deinit(allocator);
+    out.orientation_applied = source.orientation_applied;
+
+    for (0..@as(usize, rect.height)) |y| {
+        for (0..@as(usize, rect.width)) |x| {
+            const src_x = rect.x + @as(u32, @intCast(x));
+            const src_y = rect.y + @as(u32, @intCast(y));
+            out.setPixel(@intCast(x), @intCast(y), source.pixelAt(src_x, src_y).?);
+        }
+    }
+
+    return out;
+}
+
+/// Crop the center of a decoded image to the requested dimensions.
+pub fn cropCenter(
+    allocator: std.mem.Allocator,
+    source: *const DecodedImage,
+    target: Dimensions,
+) !DecodedImage {
+    if (target.width == 0 or target.height == 0) return error.InvalidDimensions;
+    if (target.width > source.width or target.height > source.height) return error.InvalidCrop;
+
+    const x = (source.width - target.width) / 2;
+    const y = (source.height - target.height) / 2;
+    return crop(allocator, source, .{
+        .x = x,
+        .y = y,
+        .width = target.width,
+        .height = target.height,
+    });
 }
 
 fn scaleToFit(source: Dimensions, options: ResizeOptions, mode: FitMode) Dimensions {
@@ -666,4 +719,90 @@ test "resizeNearest samples source pixels" {
     try std.testing.expectEqual(@as(u32, 1), resized.width);
     try std.testing.expectEqual(@as(u32, 1), resized.height);
     try std.testing.expectEqual(@as(u8, 10), resized.pixelAt(0, 0).?.rgb.r);
+}
+
+test "resizeNearest cover returns dimensions that cover target" {
+    var source = try DecodedImage.init(std.testing.allocator, 4, 2, .png);
+    defer source.deinit(std.testing.allocator);
+
+    var resized = try resizeNearest(std.testing.allocator, &source, .{
+        .width = 2,
+        .height = 2,
+        .fit = .cover,
+    });
+    defer resized.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(u32, 4), resized.width);
+    try std.testing.expectEqual(@as(u32, 2), resized.height);
+}
+
+test "crop copies a rectangular region" {
+    var source = try DecodedImage.init(std.testing.allocator, 3, 2, .png);
+    defer source.deinit(std.testing.allocator);
+
+    source.setPixel(0, 0, .{ .rgb = .{ .r = 10, .g = 0, .b = 0 } });
+    source.setPixel(1, 0, .{ .rgb = .{ .r = 20, .g = 0, .b = 0 } });
+    source.setPixel(2, 0, .{ .rgb = .{ .r = 30, .g = 0, .b = 0 } });
+    source.setPixel(0, 1, .{ .rgb = .{ .r = 40, .g = 0, .b = 0 } });
+    source.setPixel(1, 1, .{ .rgb = .{ .r = 50, .g = 0, .b = 0 } });
+    source.setPixel(2, 1, .{ .rgb = .{ .r = 60, .g = 0, .b = 0 } });
+
+    var cropped = try crop(std.testing.allocator, &source, .{
+        .x = 1,
+        .y = 0,
+        .width = 2,
+        .height = 2,
+    });
+    defer cropped.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(u32, 2), cropped.width);
+    try std.testing.expectEqual(@as(u32, 2), cropped.height);
+    try std.testing.expectEqual(@as(u8, 20), cropped.pixelAt(0, 0).?.rgb.r);
+    try std.testing.expectEqual(@as(u8, 30), cropped.pixelAt(1, 0).?.rgb.r);
+    try std.testing.expectEqual(@as(u8, 50), cropped.pixelAt(0, 1).?.rgb.r);
+    try std.testing.expectEqual(@as(u8, 60), cropped.pixelAt(1, 1).?.rgb.r);
+}
+
+test "crop rejects out-of-bounds regions" {
+    var source = try DecodedImage.init(std.testing.allocator, 2, 2, .png);
+    defer source.deinit(std.testing.allocator);
+
+    try std.testing.expectError(error.InvalidCrop, crop(std.testing.allocator, &source, .{
+        .x = 1,
+        .y = 0,
+        .width = 2,
+        .height = 1,
+    }));
+}
+
+test "crop rejects overflowing regions as invalid crop" {
+    var source = try DecodedImage.init(std.testing.allocator, 2, 2, .png);
+    defer source.deinit(std.testing.allocator);
+
+    try std.testing.expectError(error.InvalidCrop, crop(std.testing.allocator, &source, .{
+        .x = std.math.maxInt(u32),
+        .y = 0,
+        .width = 1,
+        .height = 1,
+    }));
+}
+
+test "cropCenter crops the centered region" {
+    var source = try DecodedImage.init(std.testing.allocator, 4, 2, .png);
+    defer source.deinit(std.testing.allocator);
+
+    source.setPixel(1, 0, .{ .rgb = .{ .r = 20, .g = 0, .b = 0 } });
+    source.setPixel(2, 0, .{ .rgb = .{ .r = 30, .g = 0, .b = 0 } });
+    source.setPixel(1, 1, .{ .rgb = .{ .r = 60, .g = 0, .b = 0 } });
+    source.setPixel(2, 1, .{ .rgb = .{ .r = 70, .g = 0, .b = 0 } });
+
+    var cropped = try cropCenter(std.testing.allocator, &source, .{ .width = 2, .height = 2 });
+    defer cropped.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(u32, 2), cropped.width);
+    try std.testing.expectEqual(@as(u32, 2), cropped.height);
+    try std.testing.expectEqual(@as(u8, 20), cropped.pixelAt(0, 0).?.rgb.r);
+    try std.testing.expectEqual(@as(u8, 30), cropped.pixelAt(1, 0).?.rgb.r);
+    try std.testing.expectEqual(@as(u8, 60), cropped.pixelAt(0, 1).?.rgb.r);
+    try std.testing.expectEqual(@as(u8, 70), cropped.pixelAt(1, 1).?.rgb.r);
 }
