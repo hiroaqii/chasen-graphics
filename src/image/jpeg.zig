@@ -1,5 +1,6 @@
 const std = @import("std");
 const common = @import("common.zig");
+const pixel = @import("../pixel.zig");
 
 pub const Info = common.JpegInfo;
 pub const FrameKind = common.JpegFrameKind;
@@ -57,6 +58,30 @@ const ScanHeader = struct {
     spectral_end: u8,
     successive_approximation_high: u4,
     successive_approximation_low: u4,
+};
+
+const ComponentPlan = struct {
+    frame_component: Component,
+    scan_component: ScanComponent,
+    quantization_table: QuantizationTable,
+    dc_table: CanonicalHuffmanTable,
+    ac_table: CanonicalHuffmanTable,
+    previous_dc: i16 = 0,
+};
+
+const BaselineScanPlan = struct {
+    components: [4]ComponentPlan = undefined,
+    component_count: u8,
+    max_horizontal_sampling: u4,
+    max_vertical_sampling: u4,
+
+    fn mcuWidth(self: BaselineScanPlan) u32 {
+        return @as(u32, self.max_horizontal_sampling) * 8;
+    }
+
+    fn mcuHeight(self: BaselineScanPlan) u32 {
+        return @as(u32, self.max_vertical_sampling) * 8;
+    }
 };
 
 const DecodeState = struct {
@@ -288,6 +313,102 @@ fn clampSample(value: f64) u8 {
     if (value <= 0.0) return 0;
     if (value >= 255.0) return 255;
     return @intFromFloat(value);
+}
+
+fn buildBaselineScanPlan(state: DecodeState) !BaselineScanPlan {
+    const frame = state.frame orelse return error.InvalidJpeg;
+    const scan = state.scan orelse return error.InvalidJpeg;
+    if (frame.frame != .baseline) return error.UnsupportedJpeg;
+    if (frame.precision != 8) return error.UnsupportedJpeg;
+    if ((state.restart_interval orelse 0) != 0) return error.UnsupportedJpeg;
+    if (scan.spectral_start != 0 or scan.spectral_end != 63) return error.UnsupportedJpeg;
+    if (scan.successive_approximation_high != 0 or scan.successive_approximation_low != 0) return error.UnsupportedJpeg;
+    if (scan.component_count != frame.component_count) return error.UnsupportedJpeg;
+    try validateUniqueFrameComponentIds(frame);
+
+    var plan = BaselineScanPlan{
+        .component_count = scan.component_count,
+        .max_horizontal_sampling = 1,
+        .max_vertical_sampling = 1,
+    };
+
+    for (0..frame.component_count) |index| {
+        const component = frame.components[index];
+        plan.max_horizontal_sampling = @max(plan.max_horizontal_sampling, component.horizontal_sampling);
+        plan.max_vertical_sampling = @max(plan.max_vertical_sampling, component.vertical_sampling);
+    }
+
+    for (0..scan.component_count) |index| {
+        const scan_component = scan.components[index];
+        if (scanComponentSeen(scan, scan_component.id, index)) return error.InvalidJpeg;
+        const frame_component = findFrameComponent(frame, scan_component.id) orelse return error.InvalidJpeg;
+
+        // The first MCU traversal slice only handles non-subsampled blocks. 4:2:0
+        // and 4:2:2 need component-specific block grids and are handled later.
+        if (frame_component.horizontal_sampling != 1 or frame_component.vertical_sampling != 1) return error.UnsupportedJpeg;
+
+        const quantization_table = state.quantization_tables[frame_component.quantization_table_id] orelse return error.InvalidJpeg;
+        const dc_table = state.dc_huffman_tables[scan_component.dc_table_id] orelse return error.InvalidJpeg;
+        const ac_table = state.ac_huffman_tables[scan_component.ac_table_id] orelse return error.InvalidJpeg;
+
+        plan.components[index] = .{
+            .frame_component = frame_component,
+            .scan_component = scan_component,
+            .quantization_table = quantization_table,
+            .dc_table = try CanonicalHuffmanTable.init(dc_table),
+            .ac_table = try CanonicalHuffmanTable.init(ac_table),
+        };
+    }
+
+    return plan;
+}
+
+fn validateUniqueFrameComponentIds(frame: FrameHeader) !void {
+    for (0..frame.component_count) |index| {
+        const id = frame.components[index].id;
+        for (frame.components[0..index]) |previous| {
+            if (previous.id == id) return error.InvalidJpeg;
+        }
+    }
+}
+
+fn scanComponentSeen(scan: ScanHeader, id: u8, end: usize) bool {
+    for (scan.components[0..end]) |previous| {
+        if (previous.id == id) return true;
+    }
+    return false;
+}
+
+fn findFrameComponent(frame: FrameHeader, id: u8) ?Component {
+    for (frame.components[0..frame.component_count]) |component| {
+        if (component.id == id) return component;
+    }
+    return null;
+}
+
+fn mcuGrid(frame: FrameHeader, plan: BaselineScanPlan) Dimensions {
+    return .{
+        .width = ceilDivU32(frame.dimensions.width, plan.mcuWidth()),
+        .height = ceilDivU32(frame.dimensions.height, plan.mcuHeight()),
+    };
+}
+
+fn ceilDivU32(numerator: u32, denominator: u32) u32 {
+    return (numerator + denominator - 1) / denominator;
+}
+
+fn ycbcrToRgb(y: u8, cb: u8, cr: u8) pixel.Pixel {
+    const yf = @as(f64, @floatFromInt(y));
+    const cbf = @as(f64, @floatFromInt(cb)) - 128.0;
+    const crf = @as(f64, @floatFromInt(cr)) - 128.0;
+
+    return .{
+        .rgb = .{
+            .r = clampSample(@round(yf + 1.402 * crf)),
+            .g = clampSample(@round(yf - 0.344136 * cbf - 0.714136 * crf)),
+            .b = clampSample(@round(yf + 1.772 * cbf)),
+        },
+    };
 }
 
 const zigzag_order = [_]usize{
@@ -1090,4 +1211,127 @@ test "JPEG IDCT applies DC coefficient uniformly" {
     for (samples) |sample| {
         try std.testing.expectEqual(@as(u8, 138), sample);
     }
+}
+
+test "JPEG baseline scan plan accepts non-subsampled three component scans" {
+    const state = testDecodeState(.{ .width = 17, .height = 9 }, 0x11);
+
+    const plan = try buildBaselineScanPlan(state);
+    const grid = mcuGrid(state.frame.?, plan);
+
+    try std.testing.expectEqual(@as(u8, 3), plan.component_count);
+    try std.testing.expectEqual(@as(u32, 8), plan.mcuWidth());
+    try std.testing.expectEqual(@as(u32, 8), plan.mcuHeight());
+    try std.testing.expectEqual(Dimensions{ .width = 3, .height = 2 }, grid);
+}
+
+test "JPEG baseline scan plan allows DRI zero" {
+    var state = testDecodeState(.{ .width = 8, .height = 8 }, 0x11);
+    state.restart_interval = 0;
+
+    _ = try buildBaselineScanPlan(state);
+}
+
+test "JPEG baseline scan plan rejects non-zero restart interval" {
+    var state = testDecodeState(.{ .width = 8, .height = 8 }, 0x11);
+    state.restart_interval = 4;
+
+    try std.testing.expectError(error.UnsupportedJpeg, buildBaselineScanPlan(state));
+}
+
+test "JPEG baseline scan plan rejects subsampled first slice" {
+    const state = testDecodeState(.{ .width = 16, .height = 16 }, 0x21);
+
+    try std.testing.expectError(error.UnsupportedJpeg, buildBaselineScanPlan(state));
+}
+
+test "JPEG baseline scan plan rejects duplicate frame component ids" {
+    var state = testDecodeState(.{ .width = 8, .height = 8 }, 0x11);
+    state.frame.?.components[1].id = 1;
+
+    try std.testing.expectError(error.InvalidJpeg, buildBaselineScanPlan(state));
+}
+
+test "JPEG baseline scan plan rejects duplicate scan component ids" {
+    var state = testDecodeState(.{ .width = 8, .height = 8 }, 0x11);
+    state.scan.?.components[1].id = 1;
+
+    try std.testing.expectError(error.InvalidJpeg, buildBaselineScanPlan(state));
+}
+
+test "JPEG YCbCr conversion maps neutral chroma to grayscale" {
+    const px = ycbcrToRgb(80, 128, 128);
+
+    try std.testing.expectEqual(@as(u8, 80), px.rgb.r);
+    try std.testing.expectEqual(@as(u8, 80), px.rgb.g);
+    try std.testing.expectEqual(@as(u8, 80), px.rgb.b);
+}
+
+test "JPEG YCbCr conversion clamps RGB output" {
+    const px = ycbcrToRgb(255, 255, 255);
+
+    try std.testing.expectEqual(@as(u8, 255), px.rgb.r);
+    try std.testing.expect(px.rgb.g < 255);
+    try std.testing.expectEqual(@as(u8, 255), px.rgb.b);
+}
+
+fn testDecodeState(dimensions: Dimensions, first_component_sampling: u8) DecodeState {
+    return .{
+        .frame = .{
+            .dimensions = dimensions,
+            .precision = 8,
+            .component_count = 3,
+            .frame = .baseline,
+            .components = .{
+                .{
+                    .id = 1,
+                    .horizontal_sampling = @intCast(first_component_sampling >> 4),
+                    .vertical_sampling = @intCast(first_component_sampling & 0x0f),
+                    .quantization_table_id = 0,
+                },
+                .{ .id = 2, .horizontal_sampling = 1, .vertical_sampling = 1, .quantization_table_id = 0 },
+                .{ .id = 3, .horizontal_sampling = 1, .vertical_sampling = 1, .quantization_table_id = 0 },
+                undefined,
+            },
+        },
+        .quantization_tables = .{ testQuantizationTable(), null, null, null },
+        .dc_huffman_tables = .{ testHuffmanTable(.dc), null, null, null },
+        .ac_huffman_tables = .{ testHuffmanTable(.ac), null, null, null },
+        .scan = .{
+            .component_count = 3,
+            .spectral_start = 0,
+            .spectral_end = 63,
+            .successive_approximation_high = 0,
+            .successive_approximation_low = 0,
+            .components = .{
+                .{ .id = 1, .dc_table_id = 0, .ac_table_id = 0 },
+                .{ .id = 2, .dc_table_id = 0, .ac_table_id = 0 },
+                .{ .id = 3, .dc_table_id = 0, .ac_table_id = 0 },
+                undefined,
+            },
+        },
+    };
+}
+
+fn testQuantizationTable() QuantizationTable {
+    return .{
+        .precision = 0,
+        .id = 0,
+        .values = [_]u16{1} ** 64,
+    };
+}
+
+fn testHuffmanTable(class: HuffmanTableClass) HuffmanTable {
+    return .{
+        .class = class,
+        .id = 0,
+        .code_counts = .{
+            1, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+        },
+        .symbols = .{0} ++ ([_]u8{0} ** 255),
+        .symbol_count = 1,
+    };
 }
