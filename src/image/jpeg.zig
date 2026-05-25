@@ -97,9 +97,17 @@ const BaselineScanPlan = struct {
     }
 };
 
+const ComponentSampleBlocks = struct {
+    blocks: [4]SampleBlock = undefined,
+    horizontal_sampling: u4,
+    vertical_sampling: u4,
+};
+
 const McuSampleBlocks = struct {
-    components: [4]SampleBlock = undefined,
+    components: [4]ComponentSampleBlocks = undefined,
     component_count: u8,
+    max_horizontal_sampling: u4,
+    max_vertical_sampling: u4,
 };
 
 const DecodeState = struct {
@@ -379,9 +387,10 @@ fn buildBaselineScanPlan(state: DecodeState) !BaselineScanPlan {
         if (scanComponentSeen(scan, scan_component.id, index)) return error.InvalidJpeg;
         const frame_component = findFrameComponent(frame, scan_component.id) orelse return error.InvalidJpeg;
 
-        // The first MCU traversal slice only handles non-subsampled blocks. 4:2:0
-        // and 4:2:2 need component-specific block grids and are handled later.
-        if (frame_component.horizontal_sampling != 1 or frame_component.vertical_sampling != 1) return error.UnsupportedJpeg;
+        // Keep the first sampling slice to the common cover-art cases:
+        // non-subsampled, 4:2:2, and 4:2:0. Larger sampling grids need
+        // additional bounds and quality tests before they are accepted.
+        if (frame_component.horizontal_sampling > 2 or frame_component.vertical_sampling > 2) return error.UnsupportedJpeg;
 
         const quantization_table = state.quantization_tables[frame_component.quantization_table_id] orelse return error.InvalidJpeg;
         const dc_table = state.dc_huffman_tables[scan_component.dc_table_id] orelse return error.InvalidJpeg;
@@ -450,12 +459,25 @@ fn ycbcrToRgb(y: u8, cb: u8, cr: u8) pixel.Pixel {
 fn decodeMcuSampleBlocks(reader: *EntropyBitReader, plan: *BaselineScanPlan) !McuSampleBlocks {
     var out = McuSampleBlocks{
         .component_count = plan.component_count,
+        .max_horizontal_sampling = plan.max_horizontal_sampling,
+        .max_vertical_sampling = plan.max_vertical_sampling,
     };
 
     for (plan.components[0..plan.component_count], 0..) |*component, index| {
-        const block = try decodeBlock(reader, &component.dc_table, &component.ac_table, &component.previous_dc);
-        const dequantized = try dequantizeBlock(block, component.quantization_table);
-        out.components[index] = idctBlock(dequantized);
+        const h: usize = component.frame_component.horizontal_sampling;
+        const v: usize = component.frame_component.vertical_sampling;
+        out.components[index] = .{
+            .horizontal_sampling = component.frame_component.horizontal_sampling,
+            .vertical_sampling = component.frame_component.vertical_sampling,
+        };
+
+        for (0..v) |block_y| {
+            for (0..h) |block_x| {
+                const block = try decodeBlock(reader, &component.dc_table, &component.ac_table, &component.previous_dc);
+                const dequantized = try dequantizeBlock(block, component.quantization_table);
+                out.components[index].blocks[block_y * h + block_x] = idctBlock(dequantized);
+            }
+        }
     }
 
     return out;
@@ -463,17 +485,29 @@ fn decodeMcuSampleBlocks(reader: *EntropyBitReader, plan: *BaselineScanPlan) !Mc
 
 fn mcuPixelAt(blocks: McuSampleBlocks, x: usize, y: usize) !pixel.Pixel {
     if (blocks.component_count == 1) {
-        const sample = blocks.components[0][y * 8 + x];
+        const sample = try componentSampleAt(blocks, 0, x, y);
         return ycbcrToRgb(sample, 128, 128);
     }
     if (blocks.component_count == 3) {
         return ycbcrToRgb(
-            blocks.components[0][y * 8 + x],
-            blocks.components[1][y * 8 + x],
-            blocks.components[2][y * 8 + x],
+            try componentSampleAt(blocks, 0, x, y),
+            try componentSampleAt(blocks, 1, x, y),
+            try componentSampleAt(blocks, 2, x, y),
         );
     }
     return error.UnsupportedJpeg;
+}
+
+fn componentSampleAt(blocks: McuSampleBlocks, component_index: usize, x: usize, y: usize) !u8 {
+    if (component_index >= blocks.component_count) return error.InvalidJpeg;
+    const component = blocks.components[component_index];
+    const sample_x = x * @as(usize, component.horizontal_sampling) / @as(usize, blocks.max_horizontal_sampling);
+    const sample_y = y * @as(usize, component.vertical_sampling) / @as(usize, blocks.max_vertical_sampling);
+    const block_x = sample_x / 8;
+    const block_y = sample_y / 8;
+    const block_index = block_y * @as(usize, component.horizontal_sampling) + block_x;
+    if (block_index >= @as(usize, component.horizontal_sampling) * @as(usize, component.vertical_sampling)) return error.InvalidJpeg;
+    return component.blocks[block_index][(sample_y % 8) * 8 + (sample_x % 8)];
 }
 
 fn decodeBaselinePixels(state: DecodeState, entropy_data: []const u8, out: []pixel.Pixel) !void {
@@ -489,15 +523,14 @@ fn decodeBaselinePixels(state: DecodeState, entropy_data: []const u8, out: []pix
         for (0..grid.width) |mcu_x| {
             const blocks = try decodeMcuSampleBlocks(&reader, &plan);
 
-            for (0..8) |local_y| {
-                const y = mcu_y * 8 + local_y;
+            for (0..plan.mcuHeight()) |local_y| {
+                const y = mcu_y * plan.mcuHeight() + local_y;
                 if (y >= frame.dimensions.height) break;
 
-                for (0..8) |local_x| {
-                    const x = mcu_x * 8 + local_x;
+                for (0..plan.mcuWidth()) |local_x| {
+                    const x = mcu_x * plan.mcuWidth() + local_x;
                     if (x >= frame.dimensions.width) break;
-                    out[@as(usize, y) * @as(usize, frame.dimensions.width) + @as(usize, x)] =
-                        try mcuPixelAt(blocks, local_x, local_y);
+                    out[@as(usize, y) * @as(usize, frame.dimensions.width) + @as(usize, x)] = try mcuPixelAt(blocks, local_x, local_y);
                 }
             }
         }
@@ -1367,8 +1400,32 @@ test "JPEG baseline scan plan rejects non-zero restart interval" {
     try std.testing.expectError(error.UnsupportedJpeg, buildBaselineScanPlan(state));
 }
 
-test "JPEG baseline scan plan rejects subsampled first slice" {
-    const state = testDecodeState(.{ .width = 16, .height = 16 }, 0x21);
+test "JPEG baseline scan plan accepts common 4:2:0 sampling" {
+    const state = testDecodeState(.{ .width = 16, .height = 16 }, 0x22);
+
+    const plan = try buildBaselineScanPlan(state);
+    const grid = mcuGrid(state.frame.?, plan);
+
+    try std.testing.expectEqual(@as(u32, 16), plan.mcuWidth());
+    try std.testing.expectEqual(@as(u32, 16), plan.mcuHeight());
+    try std.testing.expectEqual(Dimensions{ .width = 1, .height = 1 }, grid);
+}
+
+test "JPEG baseline scan plan accepts common 4:2:2 sampling" {
+    const state = testDecodeState(.{ .width = 16, .height = 8 }, 0x21);
+    var adjusted = state;
+    adjusted.frame.?.components[0].vertical_sampling = 1;
+
+    const plan = try buildBaselineScanPlan(adjusted);
+    const grid = mcuGrid(adjusted.frame.?, plan);
+
+    try std.testing.expectEqual(@as(u32, 16), plan.mcuWidth());
+    try std.testing.expectEqual(@as(u32, 8), plan.mcuHeight());
+    try std.testing.expectEqual(Dimensions{ .width = 1, .height = 1 }, grid);
+}
+
+test "JPEG baseline scan plan rejects larger sampling grids" {
+    const state = testDecodeState(.{ .width = 24, .height = 8 }, 0x31);
 
     try std.testing.expectError(error.UnsupportedJpeg, buildBaselineScanPlan(state));
 }
@@ -1430,12 +1487,27 @@ test "JPEG MCU sample block decode reads all plan components" {
     const px = try mcuPixelAt(blocks, 0, 0);
 
     try std.testing.expectEqual(@as(u8, 3), blocks.component_count);
-    try std.testing.expectEqual(@as(u8, 128), blocks.components[0][0]);
-    try std.testing.expectEqual(@as(u8, 128), blocks.components[1][0]);
-    try std.testing.expectEqual(@as(u8, 128), blocks.components[2][0]);
+    try std.testing.expectEqual(@as(u8, 128), blocks.components[0].blocks[0][0]);
+    try std.testing.expectEqual(@as(u8, 128), blocks.components[1].blocks[0][0]);
+    try std.testing.expectEqual(@as(u8, 128), blocks.components[2].blocks[0][0]);
     try std.testing.expectEqual(@as(u8, 128), px.rgb.r);
     try std.testing.expectEqual(@as(u8, 128), px.rgb.g);
     try std.testing.expectEqual(@as(u8, 128), px.rgb.b);
+}
+
+test "JPEG MCU sample lookup maps 4:2:0 chroma over larger luma grid" {
+    const state = testDecodeState(.{ .width = 16, .height = 16 }, 0x22);
+    var plan = try buildBaselineScanPlan(state);
+    var reader = EntropyBitReader.init(&[_]u8{ 0, 0 });
+
+    const blocks = try decodeMcuSampleBlocks(&reader, &plan);
+    const top_left = try mcuPixelAt(blocks, 0, 0);
+    const bottom_right = try mcuPixelAt(blocks, 15, 15);
+
+    try std.testing.expectEqual(@as(u4, 2), blocks.max_horizontal_sampling);
+    try std.testing.expectEqual(@as(u4, 2), blocks.max_vertical_sampling);
+    try std.testing.expectEqual(@as(u8, 128), top_left.rgb.r);
+    try std.testing.expectEqual(@as(u8, 128), bottom_right.rgb.b);
 }
 
 test "JPEG MCU sample block decode keeps component DC predictors" {

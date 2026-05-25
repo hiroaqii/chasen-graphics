@@ -185,7 +185,7 @@ pub fn decodeImage(allocator: std.mem.Allocator, bytes: []const u8) !DecodedImag
 /// Supported first slice:
 /// - SOF0 baseline, 8-bit precision
 /// - grayscale or three-component YCbCr
-/// - no chroma subsampling
+/// - non-subsampled, 4:2:2, or 4:2:0 sampling
 /// - no restart interval
 pub fn decodeJpeg(allocator: std.mem.Allocator, bytes: []const u8) !DecodedImage {
     var decoded = try jpeg.decodePixels(allocator, bytes);
