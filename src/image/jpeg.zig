@@ -172,6 +172,8 @@ const EntropyBitReader = struct {
 };
 
 const Block = [64]i16;
+const DequantizedBlock = [64]i32;
+const SampleBlock = [64]u8;
 
 fn decodeMagnitude(value: u16, size: u4) !i16 {
     if (size == 0) return 0;
@@ -233,6 +235,59 @@ fn addI16(a: i16, b: i16) !i16 {
     const sum = @as(i32, a) + @as(i32, b);
     if (sum < std.math.minInt(i16) or sum > std.math.maxInt(i16)) return error.InvalidJpeg;
     return @intCast(sum);
+}
+
+fn dequantizeBlock(block: Block, table: QuantizationTable) !DequantizedBlock {
+    var out: DequantizedBlock = undefined;
+    for (0..64) |natural_index| {
+        const quantized = @as(i32, block[natural_index]);
+        const quantizer = @as(i32, quantizationValueForNaturalIndex(table, natural_index) orelse return error.InvalidJpeg);
+        out[natural_index] = try std.math.mul(i32, quantized, quantizer);
+    }
+    return out;
+}
+
+fn quantizationValueForNaturalIndex(table: QuantizationTable, natural_index: usize) ?u16 {
+    for (zigzag_order, 0..) |mapped_natural_index, zigzag_index| {
+        if (mapped_natural_index == natural_index) return table.values[zigzag_index];
+    }
+    return null;
+}
+
+fn idctBlock(block: DequantizedBlock) SampleBlock {
+    var out: SampleBlock = undefined;
+    for (0..8) |y| {
+        for (0..8) |x| {
+            var sum: f64 = 0.0;
+            for (0..8) |v| {
+                for (0..8) |u| {
+                    const coefficient = @as(f64, @floatFromInt(block[v * 8 + u]));
+                    const cu = dctScale(u);
+                    const cv = dctScale(v);
+                    sum += cu * cv * coefficient * dctCos(x, u) * dctCos(y, v);
+                }
+            }
+
+            const shifted = 128.0 + sum / 4.0;
+            out[y * 8 + x] = clampSample(@round(shifted));
+        }
+    }
+    return out;
+}
+
+fn dctScale(index: usize) f64 {
+    return if (index == 0) 0.7071067811865476 else 1.0;
+}
+
+fn dctCos(position: usize, frequency: usize) f64 {
+    const numerator = @as(f64, @floatFromInt((2 * position + 1) * frequency)) * std.math.pi;
+    return @cos(numerator / 16.0);
+}
+
+fn clampSample(value: f64) u8 {
+    if (value <= 0.0) return 0;
+    if (value >= 255.0) return 255;
+    return @intFromFloat(value);
 }
 
 const zigzag_order = [_]usize{
@@ -435,10 +490,12 @@ fn parseDqt(state: *DecodeState, data: []const u8) !void {
         };
 
         for (0..64) |index| {
-            table.values[index] = if (precision == 0)
+            const value = if (precision == 0)
                 data[offset + index]
             else
                 std.mem.readInt(u16, data[offset + index * 2 ..][0..2], .big);
+            if (value == 0) return error.InvalidJpeg;
+            table.values[index] = value;
         }
 
         state.quantization_tables[id] = table;
@@ -780,6 +837,20 @@ test "JPEG parser state rejects invalid DQT precision instead of trapping" {
     try std.testing.expectError(error.UnsupportedJpeg, parseDecodeState(&bytes));
 }
 
+test "JPEG parser state rejects zero quantization table values" {
+    var bytes = [_]u8{
+        0xff, 0xd8,
+        0xff, 0xdb,
+        0x00, 0x43,
+        0x00,
+    } ++ ([_]u8{1} ** 64) ++ [_]u8{
+        0xff, 0xd9,
+    };
+    bytes[7] = 0;
+
+    try std.testing.expectError(error.InvalidJpeg, parseDecodeState(&bytes));
+}
+
 test "JPEG parser state rejects out-of-range SOF table ids" {
     const bytes = [_]u8{
         0xff, 0xd8,
@@ -979,4 +1050,44 @@ test "JPEG block decoder rejects AC category above baseline limit" {
         error.InvalidJpeg,
         decodeBlock(&reader, &dc_table, &ac_table, &previous_dc),
     );
+}
+
+test "JPEG dequantize maps quantization table from zigzag order" {
+    var block = [_]i16{0} ** 64;
+    block[0] = 2;
+    block[16] = 3;
+
+    var table = QuantizationTable{
+        .precision = 0,
+        .id = 0,
+        .values = undefined,
+    };
+    for (0..64) |index| {
+        table.values[index] = @intCast(index + 1);
+    }
+
+    const dequantized = try dequantizeBlock(block, table);
+
+    try std.testing.expectEqual(@as(i32, 2), dequantized[0]);
+    try std.testing.expectEqual(@as(i32, 12), dequantized[16]);
+    try std.testing.expectEqual(@as(i32, 0), dequantized[1]);
+}
+
+test "JPEG IDCT level shifts empty block to neutral gray" {
+    const samples = idctBlock([_]i32{0} ** 64);
+
+    for (samples) |sample| {
+        try std.testing.expectEqual(@as(u8, 128), sample);
+    }
+}
+
+test "JPEG IDCT applies DC coefficient uniformly" {
+    var block = [_]i32{0} ** 64;
+    block[0] = 80;
+
+    const samples = idctBlock(block);
+
+    for (samples) |sample| {
+        try std.testing.expectEqual(@as(u8, 138), sample);
+    }
 }
