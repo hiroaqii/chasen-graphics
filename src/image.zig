@@ -169,13 +169,34 @@ pub fn detectSourceFormat(bytes: []const u8) SourceFormat {
 
 /// Decode encoded image bytes into `DecodedImage`.
 ///
-/// PNG is the only implemented decoder in the first image pipeline slice.
+/// PNG and a small baseline JPEG subset are implemented.
 /// Other recognized formats return `UnsupportedImageFormat` until their
 /// decoder is intentionally added.
 pub fn decodeImage(allocator: std.mem.Allocator, bytes: []const u8) !DecodedImage {
     return switch (detectSourceFormat(bytes)) {
         .png => decodePng(allocator, bytes),
-        .jpeg, .webp, .unknown => error.UnsupportedImageFormat,
+        .jpeg => decodeJpeg(allocator, bytes),
+        .webp, .unknown => error.UnsupportedImageFormat,
+    };
+}
+
+/// Decode a small baseline subset of JPEG into `DecodedImage`.
+///
+/// Supported first slice:
+/// - SOF0 baseline, 8-bit precision
+/// - grayscale or three-component YCbCr
+/// - no chroma subsampling
+/// - no restart interval
+pub fn decodeJpeg(allocator: std.mem.Allocator, bytes: []const u8) !DecodedImage {
+    var decoded = try jpeg.decodePixels(allocator, bytes);
+    errdefer decoded.deinit(allocator);
+
+    return .{
+        .width = decoded.dimensions.width,
+        .height = decoded.dimensions.height,
+        .pixels = decoded.pixels,
+        .source_format = .jpeg,
+        .orientation_applied = false,
     };
 }
 
@@ -651,9 +672,9 @@ test "detectSourceFormat recognizes common image containers" {
 }
 
 test "decodeImage rejects unsupported formats" {
-    const jpeg_bytes = [_]u8{ 0xff, 0xd8, 0xff, 0xe0 };
+    const webp_bytes = [_]u8{ 'R', 'I', 'F', 'F', 1, 0, 0, 0, 'W', 'E', 'B', 'P' };
 
-    try std.testing.expectError(error.UnsupportedImageFormat, decodeImage(std.testing.allocator, &jpeg_bytes));
+    try std.testing.expectError(error.UnsupportedImageFormat, decodeImage(std.testing.allocator, &webp_bytes));
 }
 
 test "decodePng decodes RGBA8 pixels" {
@@ -700,6 +721,30 @@ test "decodeImage dispatches PNG bytes" {
 
     try std.testing.expectEqual(SourceFormat.png, image.source_format);
     try std.testing.expectEqual(@as(u8, 255), image.pixelAt(0, 0).?.rgb.r);
+}
+
+test "decodeJpeg decodes baseline neutral gray pixels" {
+    const bytes = minimalNeutralJpegBytes();
+
+    var image = try decodeJpeg(std.testing.allocator, bytes);
+    defer image.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(SourceFormat.jpeg, image.source_format);
+    try std.testing.expectEqual(@as(u32, 8), image.width);
+    try std.testing.expectEqual(@as(u32, 8), image.height);
+    try std.testing.expectEqual(@as(u8, 128), image.pixelAt(0, 0).?.rgb.r);
+    try std.testing.expectEqual(@as(u8, 128), image.pixelAt(7, 7).?.rgb.g);
+    try std.testing.expect(!image.orientation_applied);
+}
+
+test "decodeImage dispatches JPEG bytes" {
+    const bytes = minimalNeutralJpegBytes();
+
+    var image = try decodeImage(std.testing.allocator, bytes);
+    defer image.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(SourceFormat.jpeg, image.source_format);
+    try std.testing.expectEqual(@as(u8, 128), image.pixelAt(0, 0).?.rgb.b);
 }
 
 test "decodePng rejects extra decompressed bytes" {
@@ -911,4 +956,54 @@ test "cropCenter crops the centered region" {
     try std.testing.expectEqual(@as(u8, 30), cropped.pixelAt(1, 0).?.rgb.r);
     try std.testing.expectEqual(@as(u8, 60), cropped.pixelAt(0, 1).?.rgb.r);
     try std.testing.expectEqual(@as(u8, 70), cropped.pixelAt(1, 1).?.rgb.r);
+}
+
+fn minimalNeutralJpegBytes() []const u8 {
+    return &[_]u8{
+        0xff, 0xd8,
+        0xff, 0xdb,
+        0x00, 0x43,
+        0x00,
+    } ++ ([_]u8{1} ** 64) ++ [_]u8{
+        0xff, 0xc4,
+        0x00, 0x14,
+        0x00, 1,
+        0,    0,
+        0,    0,
+        0,    0,
+        0,    0,
+        0,    0,
+        0,    0,
+        0,    0,
+        0,    0,
+        0xff, 0xc4,
+        0x00, 0x14,
+        0x10, 1,
+        0,    0,
+        0,    0,
+        0,    0,
+        0,    0,
+        0,    0,
+        0,    0,
+        0,    0,
+        0,    0,
+        0xff, 0xc0,
+        0x00, 0x11,
+        0x08, 0x00,
+        0x08, 0x00,
+        0x08, 0x03,
+        0x01, 0x11,
+        0x00, 0x02,
+        0x11, 0x00,
+        0x03, 0x11,
+        0x00, 0xff,
+        0xda, 0x00,
+        0x0c, 0x03,
+        0x01, 0x00,
+        0x02, 0x00,
+        0x03, 0x00,
+        0x00, 0x3f,
+        0x00, 0b0000_0011,
+        0xff, 0xd9,
+    };
 }

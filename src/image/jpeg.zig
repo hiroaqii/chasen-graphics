@@ -6,6 +6,19 @@ pub const Info = common.JpegInfo;
 pub const FrameKind = common.JpegFrameKind;
 const Dimensions = common.Dimensions;
 
+pub const DecodedPixels = struct {
+    dimensions: Dimensions,
+    pixels: []pixel.Pixel,
+
+    pub fn deinit(self: *DecodedPixels, allocator: std.mem.Allocator) void {
+        allocator.free(self.pixels);
+        self.* = .{
+            .dimensions = .{ .width = 0, .height = 0 },
+            .pixels = &.{},
+        };
+    }
+};
+
 const Segment = struct {
     marker: u8,
     data: []const u8,
@@ -540,6 +553,19 @@ pub fn info(bytes: []const u8) !Info {
     }
 
     return error.InvalidJpeg;
+}
+
+pub fn decodePixels(allocator: std.mem.Allocator, bytes: []const u8) !DecodedPixels {
+    const state = try parseDecodeState(bytes);
+    const frame = state.frame orelse return error.InvalidJpeg;
+    const pixels = try allocator.alloc(pixel.Pixel, try jpegPixelCount(frame.dimensions));
+    errdefer allocator.free(pixels);
+
+    try decodeBaselinePixels(state, bytes[state.scan_data_offset..], pixels);
+    return .{
+        .dimensions = frame.dimensions,
+        .pixels = pixels,
+    };
 }
 
 fn nextSegment(bytes: []const u8, offset: *usize) !?Segment {
