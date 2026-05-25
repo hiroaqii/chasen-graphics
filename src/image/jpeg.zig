@@ -84,6 +84,11 @@ const BaselineScanPlan = struct {
     }
 };
 
+const McuSampleBlocks = struct {
+    components: [4]SampleBlock = undefined,
+    component_count: u8,
+};
+
 const DecodeState = struct {
     frame: ?FrameHeader = null,
     quantization_tables: [4]?QuantizationTable = [_]?QuantizationTable{null} ** 4,
@@ -324,6 +329,7 @@ fn buildBaselineScanPlan(state: DecodeState) !BaselineScanPlan {
     if (scan.spectral_start != 0 or scan.spectral_end != 63) return error.UnsupportedJpeg;
     if (scan.successive_approximation_high != 0 or scan.successive_approximation_low != 0) return error.UnsupportedJpeg;
     if (scan.component_count != frame.component_count) return error.UnsupportedJpeg;
+    if (scan.component_count != 1 and scan.component_count != 3) return error.UnsupportedJpeg;
     try validateUniqueFrameComponentIds(frame);
 
     var plan = BaselineScanPlan{
@@ -409,6 +415,35 @@ fn ycbcrToRgb(y: u8, cb: u8, cr: u8) pixel.Pixel {
             .b = clampSample(@round(yf + 1.772 * cbf)),
         },
     };
+}
+
+fn decodeMcuSampleBlocks(reader: *EntropyBitReader, plan: *BaselineScanPlan) !McuSampleBlocks {
+    var out = McuSampleBlocks{
+        .component_count = plan.component_count,
+    };
+
+    for (plan.components[0..plan.component_count], 0..) |*component, index| {
+        const block = try decodeBlock(reader, &component.dc_table, &component.ac_table, &component.previous_dc);
+        const dequantized = try dequantizeBlock(block, component.quantization_table);
+        out.components[index] = idctBlock(dequantized);
+    }
+
+    return out;
+}
+
+fn mcuPixelAt(blocks: McuSampleBlocks, x: usize, y: usize) !pixel.Pixel {
+    if (blocks.component_count == 1) {
+        const sample = blocks.components[0][y * 8 + x];
+        return ycbcrToRgb(sample, 128, 128);
+    }
+    if (blocks.component_count == 3) {
+        return ycbcrToRgb(
+            blocks.components[0][y * 8 + x],
+            blocks.components[1][y * 8 + x],
+            blocks.components[2][y * 8 + x],
+        );
+    }
+    return error.UnsupportedJpeg;
 }
 
 const zigzag_order = [_]usize{
@@ -1259,6 +1294,24 @@ test "JPEG baseline scan plan rejects duplicate scan component ids" {
     try std.testing.expectError(error.InvalidJpeg, buildBaselineScanPlan(state));
 }
 
+test "JPEG baseline scan plan rejects unsupported two component scans before entropy decode" {
+    var state = testDecodeState(.{ .width = 8, .height = 8 }, 0x11);
+    state.frame.?.component_count = 2;
+    state.scan.?.component_count = 2;
+
+    try std.testing.expectError(error.UnsupportedJpeg, buildBaselineScanPlan(state));
+}
+
+test "JPEG baseline scan plan rejects unsupported four component scans before entropy decode" {
+    var state = testDecodeState(.{ .width = 8, .height = 8 }, 0x11);
+    state.frame.?.component_count = 4;
+    state.frame.?.components[3] = .{ .id = 4, .horizontal_sampling = 1, .vertical_sampling = 1, .quantization_table_id = 0 };
+    state.scan.?.component_count = 4;
+    state.scan.?.components[3] = .{ .id = 4, .dc_table_id = 0, .ac_table_id = 0 };
+
+    try std.testing.expectError(error.UnsupportedJpeg, buildBaselineScanPlan(state));
+}
+
 test "JPEG YCbCr conversion maps neutral chroma to grayscale" {
     const px = ycbcrToRgb(80, 128, 128);
 
@@ -1273,6 +1326,36 @@ test "JPEG YCbCr conversion clamps RGB output" {
     try std.testing.expectEqual(@as(u8, 255), px.rgb.r);
     try std.testing.expect(px.rgb.g < 255);
     try std.testing.expectEqual(@as(u8, 255), px.rgb.b);
+}
+
+test "JPEG MCU sample block decode reads all plan components" {
+    const state = testDecodeState(.{ .width = 8, .height = 8 }, 0x11);
+    var plan = try buildBaselineScanPlan(state);
+    var reader = EntropyBitReader.init(&[_]u8{0});
+
+    const blocks = try decodeMcuSampleBlocks(&reader, &plan);
+    const px = try mcuPixelAt(blocks, 0, 0);
+
+    try std.testing.expectEqual(@as(u8, 3), blocks.component_count);
+    try std.testing.expectEqual(@as(u8, 128), blocks.components[0][0]);
+    try std.testing.expectEqual(@as(u8, 128), blocks.components[1][0]);
+    try std.testing.expectEqual(@as(u8, 128), blocks.components[2][0]);
+    try std.testing.expectEqual(@as(u8, 128), px.rgb.r);
+    try std.testing.expectEqual(@as(u8, 128), px.rgb.g);
+    try std.testing.expectEqual(@as(u8, 128), px.rgb.b);
+}
+
+test "JPEG MCU sample block decode keeps component DC predictors" {
+    const state = testDecodeState(.{ .width = 16, .height = 8 }, 0x11);
+    var plan = try buildBaselineScanPlan(state);
+    plan.components[0].previous_dc = 10;
+    var reader = EntropyBitReader.init(&[_]u8{0});
+
+    _ = try decodeMcuSampleBlocks(&reader, &plan);
+
+    try std.testing.expectEqual(@as(i16, 10), plan.components[0].previous_dc);
+    try std.testing.expectEqual(@as(i16, 0), plan.components[1].previous_dc);
+    try std.testing.expectEqual(@as(i16, 0), plan.components[2].previous_dc);
 }
 
 fn testDecodeState(dimensions: Dimensions, first_component_sampling: u8) DecodeState {
