@@ -199,6 +199,23 @@ const EntropyBitReader = struct {
         if (marker == 0xd9) return error.InvalidJpeg;
         return error.InvalidJpeg;
     }
+
+    fn finish(self: *const EntropyBitReader) !void {
+        if (self.bits_left > 0) {
+            const shift: u3 = @intCast(self.bits_left);
+            const mask = (@as(u8, 1) << shift) - 1;
+            if ((self.current_byte & mask) != mask) return error.InvalidJpeg;
+        }
+
+        if (self.offset == self.data.len) return;
+        var offset = self.offset;
+        while (offset < self.data.len and self.data[offset] == 0xff) {
+            offset += 1;
+        }
+        if (offset >= self.data.len) return error.InvalidJpeg;
+        if (self.data[offset] != 0xd9) return error.InvalidJpeg;
+        if (offset + 1 != self.data.len) return error.InvalidJpeg;
+    }
 };
 
 const Block = [64]i16;
@@ -444,6 +461,42 @@ fn mcuPixelAt(blocks: McuSampleBlocks, x: usize, y: usize) !pixel.Pixel {
         );
     }
     return error.UnsupportedJpeg;
+}
+
+fn decodeBaselinePixels(state: DecodeState, entropy_data: []const u8, out: []pixel.Pixel) !void {
+    const frame = state.frame orelse return error.InvalidJpeg;
+    const expected_pixels = try jpegPixelCount(frame.dimensions);
+    if (out.len != expected_pixels) return error.InvalidJpeg;
+
+    var plan = try buildBaselineScanPlan(state);
+    var reader = EntropyBitReader.init(entropy_data);
+    const grid = mcuGrid(frame, plan);
+
+    for (0..grid.height) |mcu_y| {
+        for (0..grid.width) |mcu_x| {
+            const blocks = try decodeMcuSampleBlocks(&reader, &plan);
+
+            for (0..8) |local_y| {
+                const y = mcu_y * 8 + local_y;
+                if (y >= frame.dimensions.height) break;
+
+                for (0..8) |local_x| {
+                    const x = mcu_x * 8 + local_x;
+                    if (x >= frame.dimensions.width) break;
+                    out[@as(usize, y) * @as(usize, frame.dimensions.width) + @as(usize, x)] =
+                        try mcuPixelAt(blocks, local_x, local_y);
+                }
+            }
+        }
+    }
+
+    try reader.finish();
+}
+
+fn jpegPixelCount(dimensions: Dimensions) !usize {
+    const width: usize = @intCast(dimensions.width);
+    const height: usize = @intCast(dimensions.height);
+    return std.math.mul(usize, width, height) catch error.ImageTooLarge;
 }
 
 const zigzag_order = [_]usize{
@@ -1095,6 +1148,20 @@ test "JPEG entropy bit reader rejects restart markers for this slice" {
     try std.testing.expectError(error.UnsupportedJpeg, reader.readBit());
 }
 
+test "JPEG entropy bit reader finish accepts fill bits and EOI marker" {
+    var reader = EntropyBitReader.init(&[_]u8{ 0b0011_1111, 0xff, 0xd9 });
+
+    try std.testing.expectEqual(@as(u16, 0), try reader.readBits(2));
+    try reader.finish();
+}
+
+test "JPEG entropy bit reader finish rejects extra entropy bytes" {
+    var reader = EntropyBitReader.init(&[_]u8{ 0b0011_1111, 0x00, 0xff, 0xd9 });
+
+    try std.testing.expectEqual(@as(u16, 0), try reader.readBits(2));
+    try std.testing.expectError(error.InvalidJpeg, reader.finish());
+}
+
 test "JPEG magnitude decode sign-extends category values" {
     try std.testing.expectEqual(@as(i16, 1), try decodeMagnitude(0b1, 1));
     try std.testing.expectEqual(@as(i16, -1), try decodeMagnitude(0b0, 1));
@@ -1356,6 +1423,41 @@ test "JPEG MCU sample block decode keeps component DC predictors" {
     try std.testing.expectEqual(@as(i16, 10), plan.components[0].previous_dc);
     try std.testing.expectEqual(@as(i16, 0), plan.components[1].previous_dc);
     try std.testing.expectEqual(@as(i16, 0), plan.components[2].previous_dc);
+}
+
+test "JPEG baseline pixel decode writes neutral gray image buffer" {
+    const state = testDecodeState(.{ .width = 8, .height = 8 }, 0x11);
+    var out: [64]pixel.Pixel = undefined;
+
+    try decodeBaselinePixels(state, &[_]u8{0b0000_0011}, &out);
+
+    for (out) |px| {
+        try std.testing.expectEqual(@as(u8, 128), px.rgb.r);
+        try std.testing.expectEqual(@as(u8, 128), px.rgb.g);
+        try std.testing.expectEqual(@as(u8, 128), px.rgb.b);
+    }
+}
+
+test "JPEG baseline pixel decode clips edge MCUs to image dimensions" {
+    const state = testDecodeState(.{ .width = 9, .height = 9 }, 0x11);
+    var out: [81]pixel.Pixel = undefined;
+
+    try decodeBaselinePixels(state, &[_]u8{ 0, 0, 0 }, &out);
+
+    try std.testing.expectEqual(@as(u8, 128), out[0].rgb.r);
+    try std.testing.expectEqual(@as(u8, 128), out[8].rgb.r);
+    try std.testing.expectEqual(@as(u8, 128), out[72].rgb.r);
+    try std.testing.expectEqual(@as(u8, 128), out[80].rgb.r);
+}
+
+test "JPEG baseline pixel decode rejects trailing entropy data" {
+    const state = testDecodeState(.{ .width = 8, .height = 8 }, 0x11);
+    var out: [64]pixel.Pixel = undefined;
+
+    try std.testing.expectError(
+        error.InvalidJpeg,
+        decodeBaselinePixels(state, &[_]u8{ 0b0000_0011, 0x00 }, &out),
+    );
 }
 
 fn testDecodeState(dimensions: Dimensions, first_component_sampling: u8) DecodeState {
