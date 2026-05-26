@@ -17,6 +17,8 @@ Initial scope:
 - ASCII / glyph brightness ramps
 - Braille dot helpers
 - pixel / image fallback helpers
+- backend-neutral terminal image placement policy
+- optional Chasen terminal image loader adapter
 
 Out of scope:
 
@@ -152,6 +154,37 @@ Run the small Braille mask example:
 
 ```sh
 zig build run-braille-mask
+```
+
+## Terminal Images
+
+- `terminal.ImagePlacementOptions`: backend-neutral terminal image placement policy.
+- `terminal.coverArtPlacementOptions()`: centered fit placement for cover art.
+- `terminal.ImageCapability`: caller-provided terminal image capability snapshot.
+- `terminal.chooseKittyTransport(...)`: choose direct Kitty, tmux passthrough, or unsupported.
+- `terminal.chooseFallback(...)`: choose a supported fallback renderer from an ordered policy.
+
+The optional `chasen_graphics_chasen` module provides:
+
+- `pngPathLoader`: Chasen terminal image loader for local encoded PNG files.
+- `decodedImagePathLoader`: Chasen terminal image loader for PNG/JPEG local paths through `graphics.image.decodeImage`.
+- `terminalImageOptions`: convert `terminal.ImagePlacementOptions` to Chasen `TerminalImageOptions`.
+- `coverArtTerminalImageOptions`: Chasen cover-art placement defaults.
+
+`terminalImageOptions` is currently a lossy conversion for fields Chasen can
+represent. `source_clip_px` and `pixel_offset` remain std-only policy fields
+until Chasen exposes matching terminal image options.
+
+Build the optional Chasen adapter:
+
+```sh
+zig build check-chasen-adapter
+```
+
+Build the terminal image example:
+
+```sh
+zig build check-terminal-image
 ```
 
 ## Development

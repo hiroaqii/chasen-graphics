@@ -40,7 +40,7 @@ const TerminalImageExample = struct {
 
         _ = sfc.borrowTextAt(0, 0, "Terminal Image Example", .{ .bold = true });
         _ = sfc.borrowTextAt(0, 1, "q: quit", .{ .fg = .gray });
-        _ = sfc.borrowTextAt(0, 3, "This wires chasen_graphics_chasen.pngPathLoader into chasen.runWith.", .{});
+        _ = sfc.borrowTextAt(0, 3, "This wires chasen_graphics_chasen.decodedImagePathLoader into chasen.runWith.", .{});
 
         const size = sfc.size();
         const image_area = chasen.Rect{
@@ -56,8 +56,8 @@ const TerminalImageExample = struct {
             // Regular text cells drawn after a Kitty placement can cover the
             // image, so the dotted placeholder is only used before load/error.
             image_surface.clearAll();
-            try image_surface.drawTerminalImage(handle, .{ .fit = .fit, .z_index = 1 });
-            _ = sfc.borrowTextAt(0, 4, "Loaded PNG through the optional Chasen adapter.", .{ .fg = .{ .index = 2 } });
+            try image_surface.drawTerminalImage(handle, chasen_graphics_chasen.coverArtTerminalImageOptions());
+            _ = sfc.borrowTextAt(0, 4, "Loaded image through the optional Chasen adapter.", .{ .fg = .{ .index = 2 } });
         } else if (self.load_error) |reason| {
             sfc.fill(image_area, .{
                 .char = .{ .grapheme = ".", .width = 1 },
@@ -111,7 +111,7 @@ pub fn main(init: std.process.Init) !void {
         .allocator = init.gpa,
         .io = init.io,
         .env_map = init.environ_map,
-        .terminal_image_path_loader = chasen_graphics_chasen.pngPathLoader,
+        .terminal_image_path_loader = chasen_graphics_chasen.decodedImagePathLoader,
     }, TerminalImageExample{});
 }
 

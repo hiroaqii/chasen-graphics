@@ -77,6 +77,20 @@ pub const PixelOffset = struct {
     y: u16 = 0,
 };
 
+/// Horizontal placement inside a destination terminal-cell area.
+pub const ImageHorizontalAlign = enum {
+    left,
+    center,
+    right,
+};
+
+/// Vertical placement inside a destination terminal-cell area.
+pub const ImageVerticalAlign = enum {
+    top,
+    middle,
+    bottom,
+};
+
 /// Source-image crop region measured in pixels.
 ///
 /// This is separate from destination clipping in terminal cells. Destination
@@ -95,10 +109,25 @@ pub const SourceClipPx = struct {
 /// options.
 pub const ImagePlacementOptions = struct {
     fit: ImageFit = .none,
+    horizontal_align: ImageHorizontalAlign = .left,
+    vertical_align: ImageVerticalAlign = .top,
     z_index: ?i32 = null,
     source_clip_px: ?SourceClipPx = null,
     pixel_offset: ?PixelOffset = null,
 };
+
+/// Default placement for cover art in a caller-chosen destination area.
+///
+/// The image is scaled to fit, centered, and placed above regular text cells.
+/// Callers still own the destination rectangle and whether to draw a fallback.
+pub fn coverArtPlacementOptions() ImagePlacementOptions {
+    return .{
+        .fit = .fit,
+        .horizontal_align = .center,
+        .vertical_align = .middle,
+        .z_index = 1,
+    };
+}
 
 /// Terminal graphics capabilities known to the caller.
 ///
@@ -309,7 +338,20 @@ test "ImagePlacementOptions defaults to unscaled placement" {
     const opts = ImagePlacementOptions{};
 
     try std.testing.expectEqual(ImageFit.none, opts.fit);
+    try std.testing.expectEqual(ImageHorizontalAlign.left, opts.horizontal_align);
+    try std.testing.expectEqual(ImageVerticalAlign.top, opts.vertical_align);
     try std.testing.expectEqual(@as(?i32, null), opts.z_index);
+    try std.testing.expectEqual(@as(?SourceClipPx, null), opts.source_clip_px);
+    try std.testing.expectEqual(@as(?PixelOffset, null), opts.pixel_offset);
+}
+
+test "coverArtPlacementOptions fits centered above text cells" {
+    const opts = coverArtPlacementOptions();
+
+    try std.testing.expectEqual(ImageFit.fit, opts.fit);
+    try std.testing.expectEqual(ImageHorizontalAlign.center, opts.horizontal_align);
+    try std.testing.expectEqual(ImageVerticalAlign.middle, opts.vertical_align);
+    try std.testing.expectEqual(@as(?i32, 1), opts.z_index);
     try std.testing.expectEqual(@as(?SourceClipPx, null), opts.source_clip_px);
     try std.testing.expectEqual(@as(?PixelOffset, null), opts.pixel_offset);
 }
