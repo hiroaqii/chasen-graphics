@@ -2,6 +2,39 @@ const std = @import("std");
 const common = @import("common.zig");
 const pixel = @import("../pixel.zig");
 
+// Minimal std-only JPEG decoder for cover-art previews.
+//
+// This file follows the JPEG/JFIF structure from:
+//
+// - ITU-T T.81 / ISO/IEC 10918-1: JPEG core coding system
+//   https://www.w3.org/Graphics/JPEG/itu-t81.pdf
+// - ITU-T T.871 / ISO/IEC 10918-5: JPEG File Interchange Format (JFIF)
+//   https://www.itu.int/rec/T-REC-T.871
+// - W3C JPEG resource page with links to both specifications
+//   https://www.w3.org/Graphics/JPEG/
+//
+// Scope is intentionally smaller than "all JPEG files". The implementation is
+// aimed at the BGG cover-art subset used by bgg-tui:
+//
+// - 8-bit baseline sequential frames (SOF0)
+// - 8-bit progressive frames (SOF2), enough for common BGG thumbnails
+// - grayscale or 3-component YCbCr images
+// - common sampling factors up to 2x2
+// - no restart interval in the normal supported path
+//
+// The high-level decode pipeline is:
+//
+// 1. Parse marker segments (DQT, DHT, SOF, SOS, DRI).
+// 2. Huffman-decode entropy-coded scan data into 8x8 DCT coefficient blocks.
+// 3. Dequantize coefficients and run IDCT to produce sample blocks.
+// 4. Upsample component samples according to sampling factors.
+// 5. Convert grayscale or YCbCr samples into RGB pixels.
+//
+// Baseline JPEG sends a complete block in one scan. Progressive JPEG sends
+// coefficient bits over multiple scans, so this decoder stores coefficient
+// blocks between scans and renders pixels only after all supported scans have
+// been applied.
+
 pub const Info = common.JpegInfo;
 pub const FrameKind = common.JpegFrameKind;
 const Dimensions = common.Dimensions;
@@ -541,6 +574,10 @@ fn decodeBaselinePixels(state: DecodeState, entropy_data: []const u8, out: []pix
     const expected_pixels = try jpegPixelCount(frame.dimensions);
     if (out.len != expected_pixels) return error.InvalidJpeg;
 
+    // Baseline sequential JPEG has one interleaved scan for the supported path.
+    // Each MCU carries complete 8x8 coefficient blocks for its components.
+    // `decodeMcuSampleBlocks` performs entropy decode -> dequantize -> IDCT,
+    // and the loop below writes those sample blocks into the final pixel grid.
     var plan = try buildBaselineScanPlan(state);
     var reader = EntropyBitReader.init(entropy_data);
     const grid = mcuGrid(frame, plan);
@@ -623,6 +660,11 @@ fn decodeProgressivePixels(allocator: std.mem.Allocator, state: DecodeState, byt
     var progressive = try initProgressiveImage(allocator, state);
     defer progressive.deinit(allocator);
 
+    // Progressive JPEG separates a picture into multiple scans. Early scans
+    // send coarse coefficient bits; later refinement scans add lower bits. We
+    // keep DCT coefficient blocks in `ProgressiveImage` until every supported
+    // scan has contributed, then run the same dequantize/IDCT/color path used
+    // by baseline decode.
     for (state.scans[0..state.scan_count]) |scan| {
         try decodeProgressiveScan(&progressive, scan, bytes[scan.data_start..scan.data_end]);
     }
@@ -696,6 +738,11 @@ fn decodeProgressiveScan(image: *ProgressiveImage, scan_data: ScanData, entropy_
     if (scan.spectral_start != 0 and scan.component_count != 1) return error.UnsupportedJpeg;
     try validateProgressiveApproximation(scan);
 
+    // Progressive scan parameters decide which coefficient band this scan
+    // updates. Spectral selection 0 is the DC coefficient; 1..63 are AC
+    // coefficients in zigzag order. Successive approximation high == 0 means
+    // "first" scan for that band; otherwise the scan refines previously stored
+    // coefficients.
     var reader = EntropyBitReader.init(entropy_data);
     if (scan.spectral_start == 0) {
         if (scan.successive_approximation_high == 0) {
@@ -790,6 +837,14 @@ fn decodeProgressiveAcFirst(
 
             var k: usize = scan.spectral_start;
             while (k <= scan.spectral_end) {
+                // AC symbols pack two values:
+                //
+                // - high nibble: run length of zero coefficients before the
+                //   next non-zero coefficient
+                // - low nibble: bit width of that coefficient's magnitude
+                //
+                // size 0 with run < 15 is EOB run. size 0 with run 15 is ZRL,
+                // which skips 16 zero coefficients.
                 const symbol = try ac_table.decode(reader);
                 const run = symbol >> 4;
                 const size_raw = symbol & 0x0f;
@@ -836,6 +891,12 @@ fn decodeProgressiveAcRefine(
 
             var k: usize = scan.spectral_start;
             while (k <= scan.spectral_end) {
+                // AC refinement is trickier than AC first scans because the
+                // scan both refines existing non-zero coefficients and may add
+                // one newly non-zero coefficient. The symbol still carries
+                // zero-run and size, but the only valid new coefficient size is
+                // 1 bit. Existing coefficients consume refinement bits as the
+                // scan walks across the spectral band.
                 const symbol = ac_table.decode(reader) catch |err| switch (err) {
                     error.InvalidJpeg => {
                         if (reader.offset >= reader.data.len) return;
@@ -1005,6 +1066,9 @@ const zigzag_order = [_]usize{
     58, 59, 52, 45, 38, 31, 39, 46,
     53, 60, 61, 54, 47, 55, 62, 63,
 };
+// JPEG entropy coding stores AC coefficients in zigzag order so low-frequency
+// coefficients come first and long zero runs become likely near the end of a
+// block. This table maps that scan order to natural row-major 8x8 indices.
 
 /// Parse JPEG dimensions and frame metadata from encoded bytes.
 ///
@@ -1093,6 +1157,11 @@ fn parseDecodeState(bytes: []const u8) !DecodeState {
     if (bytes.len < 4) return error.InvalidJpeg;
     if (bytes[0] != 0xff or bytes[1] != 0xd8) return error.InvalidJpeg;
 
+    // JPEG files are marker streams. Table/frame/scan headers are marker
+    // segments, while entropy-coded scan data follows SOS until the next marker.
+    // Progressive JPEG can redefine Huffman tables between scans, so each
+    // ScanData stores the active table snapshot for the scan payload it points
+    // at.
     var state = DecodeState{};
     var offset: usize = 2;
     while (try nextDecodeSegment(bytes, &offset)) |segment| {
