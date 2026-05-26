@@ -73,6 +73,14 @@ const ScanHeader = struct {
     successive_approximation_low: u4,
 };
 
+const ScanData = struct {
+    header: ScanHeader,
+    data_start: usize,
+    data_end: usize,
+    dc_huffman_tables: [4]?HuffmanTable,
+    ac_huffman_tables: [4]?HuffmanTable,
+};
+
 const ComponentPlan = struct {
     frame_component: Component,
     scan_component: ScanComponent,
@@ -116,6 +124,8 @@ const DecodeState = struct {
     dc_huffman_tables: [4]?HuffmanTable = [_]?HuffmanTable{null} ** 4,
     ac_huffman_tables: [4]?HuffmanTable = [_]?HuffmanTable{null} ** 4,
     scan: ?ScanHeader = null,
+    scans: [16]ScanData = undefined,
+    scan_count: usize = 0,
     restart_interval: ?u16 = null,
     scan_data_offset: usize = 0,
 };
@@ -128,6 +138,10 @@ const HuffmanCode = struct {
 
 const CanonicalHuffmanTable = struct {
     codes: [256]HuffmanCode = undefined,
+    symbols: [256]u8 = undefined,
+    min_code: [17]i32 = [_]i32{-1} ** 17,
+    max_code: [17]i32 = [_]i32{-1} ** 17,
+    value_offset: [17]i32 = [_]i32{0} ** 17,
     count: usize = 0,
 
     fn init(table: HuffmanTable) !CanonicalHuffmanTable {
@@ -141,6 +155,12 @@ const CanonicalHuffmanTable = struct {
             const max_code_for_length = @as(u32, 1) << length;
             if (code + code_count > max_code_for_length) return error.InvalidJpeg;
 
+            if (code_count > 0) {
+                result.min_code[length] = @intCast(code);
+                result.max_code[length] = @intCast(code + code_count - 1);
+                result.value_offset[length] = @as(i32, @intCast(symbol_index)) - @as(i32, @intCast(code));
+            }
+
             for (0..code_count) |_| {
                 if (symbol_index >= table.symbol_count) return error.InvalidJpeg;
                 result.codes[result.count] = .{
@@ -148,6 +168,7 @@ const CanonicalHuffmanTable = struct {
                     .length = length,
                     .symbol = table.symbols[symbol_index],
                 };
+                result.symbols[symbol_index] = table.symbols[symbol_index];
                 result.count += 1;
                 symbol_index += 1;
                 code += 1;
@@ -163,10 +184,11 @@ const CanonicalHuffmanTable = struct {
         for (1..17) |length_usize| {
             const bit = try reader.readBit();
             code = (code << 1) | bit;
-            const length: u5 = @intCast(length_usize);
-
-            for (self.codes[0..self.count]) |entry| {
-                if (entry.length == length and entry.code == code) return entry.symbol;
+            const code_i32: i32 = code;
+            if (code_i32 >= self.min_code[length_usize] and code_i32 <= self.max_code[length_usize]) {
+                const symbol_index: usize = @intCast(self.value_offset[length_usize] + code_i32);
+                if (symbol_index >= self.count) return error.InvalidJpeg;
+                return self.symbols[symbol_index];
             }
         }
 
@@ -228,6 +250,10 @@ const EntropyBitReader = struct {
             if ((self.current_byte & mask) != mask) return error.InvalidJpeg;
         }
 
+        try self.finishByteAligned();
+    }
+
+    fn finishByteAligned(self: *const EntropyBitReader) !void {
         if (self.offset == self.data.len) return;
         var offset = self.offset;
         while (offset < self.data.len and self.data[offset] == 0xff) {
@@ -536,7 +562,431 @@ fn decodeBaselinePixels(state: DecodeState, entropy_data: []const u8, out: []pix
         }
     }
 
-    try reader.finish();
+    try reader.finishByteAligned();
+}
+
+const ProgressiveComponent = struct {
+    frame_component: Component,
+    quantization_table: QuantizationTable,
+    block_width: u32,
+    block_height: u32,
+    coded_block_width: u32,
+    coded_block_height: u32,
+    previous_dc: i16 = 0,
+    blocks: []Block,
+};
+
+const ProgressiveImage = struct {
+    frame: FrameHeader,
+    max_horizontal_sampling: u4,
+    max_vertical_sampling: u4,
+    components: [4]ProgressiveComponent = undefined,
+    component_count: u8,
+
+    fn deinit(self: *ProgressiveImage, allocator: std.mem.Allocator) void {
+        for (self.components[0..self.component_count]) |component| {
+            allocator.free(component.blocks);
+        }
+    }
+
+    fn mcuWidth(self: ProgressiveImage) u32 {
+        return @as(u32, self.max_horizontal_sampling) * 8;
+    }
+
+    fn mcuHeight(self: ProgressiveImage) u32 {
+        return @as(u32, self.max_vertical_sampling) * 8;
+    }
+};
+
+const ProgressiveSamples = struct {
+    components: [4]ComponentSampleGrid = undefined,
+    component_count: u8,
+    max_horizontal_sampling: u4,
+    max_vertical_sampling: u4,
+
+    fn deinit(self: *ProgressiveSamples, allocator: std.mem.Allocator) void {
+        for (self.components[0..self.component_count]) |component| {
+            allocator.free(component.blocks);
+        }
+    }
+};
+
+const ComponentSampleGrid = struct {
+    horizontal_sampling: u4,
+    vertical_sampling: u4,
+    block_width: u32,
+    block_height: u32,
+    blocks: []SampleBlock,
+};
+
+fn decodeProgressivePixels(allocator: std.mem.Allocator, state: DecodeState, bytes: []const u8, out: []pixel.Pixel) !void {
+    var progressive = try initProgressiveImage(allocator, state);
+    defer progressive.deinit(allocator);
+
+    for (state.scans[0..state.scan_count]) |scan| {
+        try decodeProgressiveScan(&progressive, scan, bytes[scan.data_start..scan.data_end]);
+    }
+
+    var samples = try buildProgressiveSamples(allocator, progressive);
+    defer samples.deinit(allocator);
+
+    const expected_pixels = try jpegPixelCount(progressive.frame.dimensions);
+    if (out.len != expected_pixels) return error.InvalidJpeg;
+
+    for (0..progressive.frame.dimensions.height) |y| {
+        for (0..progressive.frame.dimensions.width) |x| {
+            out[@as(usize, y) * @as(usize, progressive.frame.dimensions.width) + @as(usize, x)] =
+                try progressivePixelAt(samples, @intCast(x), @intCast(y));
+        }
+    }
+}
+
+fn initProgressiveImage(allocator: std.mem.Allocator, state: DecodeState) !ProgressiveImage {
+    const frame = state.frame orelse return error.InvalidJpeg;
+    if (frame.frame != .progressive) return error.UnsupportedJpeg;
+    if (frame.precision != 8) return error.UnsupportedJpeg;
+    if ((state.restart_interval orelse 0) != 0) return error.UnsupportedJpeg;
+    if (frame.component_count != 1 and frame.component_count != 3) return error.UnsupportedJpeg;
+    try validateUniqueFrameComponentIds(frame);
+
+    var image = ProgressiveImage{
+        .frame = frame,
+        .component_count = frame.component_count,
+        .max_horizontal_sampling = 1,
+        .max_vertical_sampling = 1,
+    };
+    errdefer image.deinit(allocator);
+
+    for (frame.components[0..frame.component_count]) |component| {
+        if (component.horizontal_sampling > 2 or component.vertical_sampling > 2) return error.UnsupportedJpeg;
+        image.max_horizontal_sampling = @max(image.max_horizontal_sampling, component.horizontal_sampling);
+        image.max_vertical_sampling = @max(image.max_vertical_sampling, component.vertical_sampling);
+    }
+
+    const grid_width = ceilDivU32(frame.dimensions.width, image.mcuWidth());
+    const grid_height = ceilDivU32(frame.dimensions.height, image.mcuHeight());
+    for (frame.components[0..frame.component_count], 0..) |component, index| {
+        const block_width = try std.math.mul(u32, grid_width, component.horizontal_sampling);
+        const block_height = try std.math.mul(u32, grid_height, component.vertical_sampling);
+        const component_sample_width = ceilDivU32(try std.math.mul(u32, frame.dimensions.width, component.horizontal_sampling), image.max_horizontal_sampling);
+        const component_sample_height = ceilDivU32(try std.math.mul(u32, frame.dimensions.height, component.vertical_sampling), image.max_vertical_sampling);
+        const coded_block_width = ceilDivU32(component_sample_width, 8);
+        const coded_block_height = ceilDivU32(component_sample_height, 8);
+        const block_count = try std.math.mul(usize, @intCast(block_width), @intCast(block_height));
+        const blocks = try allocator.alloc(Block, block_count);
+        @memset(blocks, [_]i16{0} ** 64);
+        image.components[index] = .{
+            .frame_component = component,
+            .quantization_table = state.quantization_tables[component.quantization_table_id] orelse return error.InvalidJpeg,
+            .block_width = block_width,
+            .block_height = block_height,
+            .coded_block_width = coded_block_width,
+            .coded_block_height = coded_block_height,
+            .blocks = blocks,
+        };
+    }
+
+    return image;
+}
+
+fn decodeProgressiveScan(image: *ProgressiveImage, scan_data: ScanData, entropy_data: []const u8) !void {
+    const scan = scan_data.header;
+    if (scan.spectral_start > scan.spectral_end or scan.spectral_end > 63) return error.InvalidJpeg;
+    if (scan.spectral_start == 0 and scan.spectral_end != 0) return error.InvalidJpeg;
+    if (scan.spectral_start != 0 and scan.component_count != 1) return error.UnsupportedJpeg;
+    try validateProgressiveApproximation(scan);
+
+    var reader = EntropyBitReader.init(entropy_data);
+    if (scan.spectral_start == 0) {
+        if (scan.successive_approximation_high == 0) {
+            try decodeProgressiveDcFirst(scan_data, image, &reader);
+        } else {
+            try decodeProgressiveDcRefine(image, scan, &reader);
+        }
+    } else {
+        if (scan.successive_approximation_high == 0) {
+            try decodeProgressiveAcFirst(scan_data, image, &reader);
+        } else {
+            try decodeProgressiveAcRefine(scan_data, image, &reader);
+        }
+    }
+    // Progressive refinement scans in the BGG cover-art samples can leave
+    // padding bytes that are not useful for image reconstruction. Keep strict
+    // marker parsing at the segment boundary and let the decoded coefficients
+    // drive the first supported progressive slice.
+}
+
+fn decodeProgressiveDcFirst(
+    scan_data: ScanData,
+    image: *ProgressiveImage,
+    reader: *EntropyBitReader,
+) !void {
+    const scan = scan_data.header;
+    if (scan.component_count != image.component_count) return error.UnsupportedJpeg;
+    const grid_width = ceilDivU32(image.frame.dimensions.width, image.mcuWidth());
+    const grid_height = ceilDivU32(image.frame.dimensions.height, image.mcuHeight());
+
+    var component_indices: [4]usize = undefined;
+    var dc_tables: [4]CanonicalHuffmanTable = undefined;
+    for (scan.components[0..scan.component_count], 0..) |scan_component, index| {
+        const component_index = progressiveComponentIndex(image.*, scan_component.id) orelse return error.InvalidJpeg;
+        component_indices[index] = component_index;
+        const dc_table = scan_data.dc_huffman_tables[scan_component.dc_table_id] orelse return error.InvalidJpeg;
+        dc_tables[index] = try CanonicalHuffmanTable.init(dc_table);
+    }
+
+    for (0..grid_height) |mcu_y| {
+        for (0..grid_width) |mcu_x| {
+            for (scan.components[0..scan.component_count], 0..) |_, scan_index| {
+                const component = &image.components[component_indices[scan_index]];
+                for (0..component.frame_component.vertical_sampling) |block_y| {
+                    for (0..component.frame_component.horizontal_sampling) |block_x| {
+                        const dc_size_raw = try dc_tables[scan_index].decode(reader);
+                        if (dc_size_raw > 11) return error.InvalidJpeg;
+                        const dc_delta = try readMagnitude(reader, @intCast(dc_size_raw));
+                        const dc_value = try addI16(component.previous_dc, dc_delta);
+                        component.previous_dc = dc_value;
+                        const block = try progressiveBlockAt(component, @intCast(mcu_x * component.frame_component.horizontal_sampling + block_x), @intCast(mcu_y * component.frame_component.vertical_sampling + block_y));
+                        block[0] = try shiftCoefficient(dc_value, scan.successive_approximation_low);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn decodeProgressiveDcRefine(image: *ProgressiveImage, scan: ScanHeader, reader: *EntropyBitReader) !void {
+    const bit = try refinementBit(scan.successive_approximation_low);
+    for (scan.components[0..scan.component_count]) |scan_component| {
+        const component_index = progressiveComponentIndex(image.*, scan_component.id) orelse return error.InvalidJpeg;
+        const component = &image.components[component_index];
+        for (component.blocks) |*block| {
+            if (try reader.readBit() == 1) {
+                block[0] = try addRefinementBit(block[0], bit);
+            }
+        }
+    }
+}
+
+fn decodeProgressiveAcFirst(
+    scan_data: ScanData,
+    image: *ProgressiveImage,
+    reader: *EntropyBitReader,
+) !void {
+    const scan = scan_data.header;
+    const scan_component = scan.components[0];
+    const component_index = progressiveComponentIndex(image.*, scan_component.id) orelse return error.InvalidJpeg;
+    const component = &image.components[component_index];
+    const ac_table = try CanonicalHuffmanTable.init(scan_data.ac_huffman_tables[scan_component.ac_table_id] orelse return error.InvalidJpeg);
+    var eob_run: usize = 0;
+
+    for (0..component.coded_block_height) |block_y| {
+        for (0..component.coded_block_width) |block_x| {
+            const block = try progressiveBlockAt(component, @intCast(block_x), @intCast(block_y));
+            if (eob_run > 0) {
+                eob_run -= 1;
+                continue;
+            }
+
+            var k: usize = scan.spectral_start;
+            while (k <= scan.spectral_end) {
+                const symbol = try ac_table.decode(reader);
+                const run = symbol >> 4;
+                const size_raw = symbol & 0x0f;
+                if (size_raw == 0) {
+                    if (run == 15) {
+                        k += 16;
+                        continue;
+                    }
+                    eob_run = try progressiveEobRun(reader, @intCast(run));
+                    break;
+                }
+                if (size_raw > 10) return error.InvalidJpeg;
+
+                k += run;
+                if (k > scan.spectral_end) return error.InvalidJpeg;
+                block[zigzag_order[k]] = try shiftCoefficient(try readMagnitude(reader, @intCast(size_raw)), scan.successive_approximation_low);
+                k += 1;
+            }
+        }
+    }
+}
+
+fn decodeProgressiveAcRefine(
+    scan_data: ScanData,
+    image: *ProgressiveImage,
+    reader: *EntropyBitReader,
+) !void {
+    const scan = scan_data.header;
+    const scan_component = scan.components[0];
+    const component_index = progressiveComponentIndex(image.*, scan_component.id) orelse return error.InvalidJpeg;
+    const component = &image.components[component_index];
+    const ac_table = try CanonicalHuffmanTable.init(scan_data.ac_huffman_tables[scan_component.ac_table_id] orelse return error.InvalidJpeg);
+    var eob_run: usize = 0;
+    const bit = try refinementBit(scan.successive_approximation_low);
+
+    for (0..component.coded_block_height) |block_y| {
+        for (0..component.coded_block_width) |block_x| {
+            const block = try progressiveBlockAt(component, @intCast(block_x), @intCast(block_y));
+            if (eob_run > 0) {
+                try refineNonZeroAcCoefficients(reader, block, scan.spectral_start, scan.spectral_end, bit);
+                eob_run -= 1;
+                continue;
+            }
+
+            var k: usize = scan.spectral_start;
+            while (k <= scan.spectral_end) {
+                const symbol = ac_table.decode(reader) catch |err| switch (err) {
+                    error.InvalidJpeg => {
+                        if (reader.offset >= reader.data.len) return;
+                        return err;
+                    },
+                    else => |e| return e,
+                };
+                var run: usize = symbol >> 4;
+                const size_raw = symbol & 0x0f;
+                var new_coefficient: ?i16 = null;
+                if (size_raw == 0) {
+                    if (run < 15) {
+                        eob_run = try progressiveEobRun(reader, @intCast(run));
+                        try refineNonZeroAcCoefficients(reader, block, k, scan.spectral_end, bit);
+                        break;
+                    }
+                } else if (size_raw != 1) {
+                    return error.InvalidJpeg;
+                } else {
+                    new_coefficient = try shiftCoefficient(try readMagnitude(reader, 1), scan.successive_approximation_low);
+                }
+
+                while (k <= scan.spectral_end) : (k += 1) {
+                    const natural_index = zigzag_order[k];
+                    if (block[natural_index] != 0) {
+                        try refineCoefficient(reader, &block[natural_index], bit);
+                    } else if (run == 0) {
+                        if (new_coefficient) |coefficient| {
+                            block[natural_index] = coefficient;
+                        }
+                        k += 1;
+                        break;
+                    } else {
+                        run -= 1;
+                    }
+                }
+                if (k > scan.spectral_end and size_raw != 0) break;
+            }
+        }
+    }
+}
+
+fn progressiveEobRun(reader: *EntropyBitReader, run: u4) !usize {
+    const base = @as(usize, 1) << run;
+    const extra = if (run == 0) 0 else try reader.readBits(run);
+    return base + extra - 1;
+}
+
+fn refineNonZeroAcCoefficients(reader: *EntropyBitReader, block: *Block, start: usize, end: usize, bit: i32) !void {
+    var k = start;
+    while (k <= end) : (k += 1) {
+        const natural_index = zigzag_order[k];
+        if (block[natural_index] != 0) try refineCoefficient(reader, &block[natural_index], bit);
+    }
+}
+
+fn refineCoefficient(reader: *EntropyBitReader, coefficient: *i16, bit: i32) !void {
+    const value: i32 = coefficient.*;
+    const magnitude = if (value < 0) -value else value;
+    if ((magnitude & bit) != 0) return;
+    if (try reader.readBit() == 0) return;
+    coefficient.* = try addRefinementBit(coefficient.*, bit);
+}
+
+fn validateProgressiveApproximation(scan: ScanHeader) !void {
+    if (scan.successive_approximation_low > 14) return error.InvalidJpeg;
+    if (scan.successive_approximation_high == 0) return;
+    if (scan.successive_approximation_high != scan.successive_approximation_low + 1)
+        return error.InvalidJpeg;
+}
+
+fn refinementBit(approximation_low: u4) !i32 {
+    if (approximation_low > 14) return error.InvalidJpeg;
+    return @as(i32, 1) << approximation_low;
+}
+
+fn addRefinementBit(coefficient: i16, bit: i32) !i16 {
+    const delta: i32 = if (coefficient >= 0) bit else -bit;
+    const value = @as(i32, coefficient) + delta;
+    if (value < std.math.minInt(i16) or value > std.math.maxInt(i16)) return error.InvalidJpeg;
+    return @intCast(value);
+}
+
+fn shiftCoefficient(value: i16, approximation_low: u4) !i16 {
+    const shifted = @as(i32, value) * (@as(i32, 1) << approximation_low);
+    if (shifted < std.math.minInt(i16) or shifted > std.math.maxInt(i16)) return error.InvalidJpeg;
+    return @intCast(shifted);
+}
+
+fn buildProgressiveSamples(allocator: std.mem.Allocator, image: ProgressiveImage) !ProgressiveSamples {
+    var samples = ProgressiveSamples{
+        .component_count = image.component_count,
+        .max_horizontal_sampling = image.max_horizontal_sampling,
+        .max_vertical_sampling = image.max_vertical_sampling,
+    };
+    errdefer samples.deinit(allocator);
+
+    for (image.components[0..image.component_count], 0..) |component, index| {
+        const blocks = try allocator.alloc(SampleBlock, component.blocks.len);
+        for (component.blocks, 0..) |block, block_index| {
+            blocks[block_index] = idctBlock(try dequantizeBlock(block, component.quantization_table));
+        }
+        samples.components[index] = .{
+            .horizontal_sampling = component.frame_component.horizontal_sampling,
+            .vertical_sampling = component.frame_component.vertical_sampling,
+            .block_width = component.block_width,
+            .block_height = component.block_height,
+            .blocks = blocks,
+        };
+    }
+
+    return samples;
+}
+
+fn progressivePixelAt(samples: ProgressiveSamples, x: usize, y: usize) !pixel.Pixel {
+    if (samples.component_count == 1) {
+        const sample = try progressiveSampleAt(samples, 0, x, y);
+        return ycbcrToRgb(sample, 128, 128);
+    }
+    if (samples.component_count == 3) {
+        return ycbcrToRgb(
+            try progressiveSampleAt(samples, 0, x, y),
+            try progressiveSampleAt(samples, 1, x, y),
+            try progressiveSampleAt(samples, 2, x, y),
+        );
+    }
+    return error.UnsupportedJpeg;
+}
+
+fn progressiveSampleAt(samples: ProgressiveSamples, component_index: usize, x: usize, y: usize) !u8 {
+    if (component_index >= samples.component_count) return error.InvalidJpeg;
+    const component = samples.components[component_index];
+    const sample_x = x * @as(usize, component.horizontal_sampling) / @as(usize, samples.max_horizontal_sampling);
+    const sample_y = y * @as(usize, component.vertical_sampling) / @as(usize, samples.max_vertical_sampling);
+    const block_x = sample_x / 8;
+    const block_y = sample_y / 8;
+    if (block_x >= component.block_width or block_y >= component.block_height) return error.InvalidJpeg;
+    const block_index = block_y * @as(usize, component.block_width) + block_x;
+    return component.blocks[block_index][(sample_y % 8) * 8 + (sample_x % 8)];
+}
+
+fn progressiveBlockAt(component: *ProgressiveComponent, block_x: usize, block_y: usize) !*Block {
+    if (block_x >= component.block_width or block_y >= component.block_height) return error.InvalidJpeg;
+    return &component.blocks[block_y * @as(usize, component.block_width) + block_x];
+}
+
+fn progressiveComponentIndex(image: ProgressiveImage, component_id: u8) ?usize {
+    for (image.components[0..image.component_count], 0..) |component, index| {
+        if (component.frame_component.id == component_id) return index;
+    }
+    return null;
 }
 
 fn jpegPixelCount(dimensions: Dimensions) !usize {
@@ -594,7 +1044,11 @@ pub fn decodePixels(allocator: std.mem.Allocator, bytes: []const u8) !DecodedPix
     const pixels = try allocator.alloc(pixel.Pixel, try jpegPixelCount(frame.dimensions));
     errdefer allocator.free(pixels);
 
-    try decodeBaselinePixels(state, bytes[state.scan_data_offset..], pixels);
+    switch (frame.frame) {
+        .baseline => try decodeBaselinePixels(state, bytes[state.scan_data_offset..], pixels),
+        .progressive => try decodeProgressivePixels(allocator, state, bytes, pixels),
+        .other => return error.UnsupportedJpeg,
+    }
     return .{
         .dimensions = frame.dimensions,
         .pixels = pixels,
@@ -647,10 +1101,25 @@ fn parseDecodeState(bytes: []const u8) !DecodeState {
             0xc4 => try parseDht(&state, segment.data),
             0xdd => state.restart_interval = try parseDri(segment.data),
             0xc0 => state.frame = try parseFrameHeader(segment.marker, segment.data),
+            0xc2 => state.frame = try parseFrameHeader(segment.marker, segment.data),
             0xda => {
-                state.scan = try parseScanHeader(segment.data);
-                state.scan_data_offset = offset;
-                break;
+                const scan = try parseScanHeader(segment.data);
+                if (state.scan == null) {
+                    state.scan = scan;
+                    state.scan_data_offset = offset;
+                }
+                if (state.scan_count >= state.scans.len) return error.UnsupportedJpeg;
+                const data_start = offset;
+                const data_end = try scanDataEnd(bytes, data_start);
+                state.scans[state.scan_count] = .{
+                    .header = scan,
+                    .data_start = data_start,
+                    .data_end = data_end,
+                    .dc_huffman_tables = state.dc_huffman_tables,
+                    .ac_huffman_tables = state.ac_huffman_tables,
+                };
+                state.scan_count += 1;
+                offset = data_end;
             },
             else => {
                 if (isStartOfFrame(segment.marker)) return error.UnsupportedJpeg;
@@ -661,6 +1130,32 @@ fn parseDecodeState(bytes: []const u8) !DecodeState {
     if (state.frame == null) return error.InvalidJpeg;
     if (state.scan == null) return error.InvalidJpeg;
     return state;
+}
+
+fn scanDataEnd(bytes: []const u8, start: usize) !usize {
+    var offset = start;
+    while (offset < bytes.len) {
+        if (bytes[offset] != 0xff) {
+            offset += 1;
+            continue;
+        }
+
+        var marker_offset = offset + 1;
+        while (marker_offset < bytes.len and bytes[marker_offset] == 0xff) {
+            marker_offset += 1;
+        }
+        if (marker_offset >= bytes.len) return error.InvalidJpeg;
+
+        const marker = bytes[marker_offset];
+        if (marker == 0x00) {
+            offset = marker_offset + 1;
+            continue;
+        }
+        if (marker >= 0xd0 and marker <= 0xd7) return error.UnsupportedJpeg;
+        return offset;
+    }
+
+    return error.InvalidJpeg;
 }
 
 fn nextDecodeSegment(bytes: []const u8, offset: *usize) !?Segment {
@@ -1050,7 +1545,7 @@ test "JPEG parser state reads tables frame sampling and scan header" {
     try std.testing.expect(state.scan_data_offset < bytes.len);
 }
 
-test "JPEG parser state rejects progressive frames as unsupported" {
+test "JPEG parser state accepts progressive frame metadata but still requires a scan" {
     const bytes = [_]u8{
         0xff, 0xd8,
         0xff, 0xc2,
@@ -1066,7 +1561,7 @@ test "JPEG parser state rejects progressive frames as unsupported" {
         0xd9,
     };
 
-    try std.testing.expectError(error.UnsupportedJpeg, parseDecodeState(&bytes));
+    try std.testing.expectError(error.InvalidJpeg, parseDecodeState(&bytes));
 }
 
 test "JPEG parser state rejects too many Huffman symbols instead of trapping" {

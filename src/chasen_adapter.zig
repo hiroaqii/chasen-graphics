@@ -31,9 +31,9 @@ pub fn pngPathLoader(
 /// Chasen `RunOptions.terminal_image_path_loader` for decoded local images.
 ///
 /// Unlike `pngPathLoader`, this path goes through `graphics.image.decodeImage`
-/// and transmits raw RGBA pixels. It is the format-aware loader intended for
-/// callers that need JPEG cover art without pulling libvaxis' zigimg path into
-/// the app compile.
+/// and then re-encodes decoded pixels as PNG before terminal transport. It is
+/// the format-aware loader intended for callers that need JPEG cover art
+/// without pulling libvaxis' zigimg path into the app compile.
 pub fn decodedImagePathLoader(
     _: ?*anyopaque,
     vx: *chasen.TerminalImageLoaderVaxis,
@@ -57,21 +57,10 @@ pub fn decodedImagePathLoader(
     var image = graphics.image.decodeImage(allocator, bytes) catch return error.LoadFailed;
     defer image.deinit(allocator);
 
-    const rgba = rgbaBytesAlloc(allocator, &image) catch return error.LoadFailed;
-    defer allocator.free(rgba);
+    const png = graphics.image.encodePngRgbaAlloc(allocator, &image) catch return error.LoadFailed;
+    defer allocator.free(png);
 
-    const encoder = std.base64.standard.Encoder;
-    const encoded = allocator.alloc(u8, encoder.calcSize(rgba.len)) catch return error.LoadFailed;
-    defer allocator.free(encoded);
-    _ = encoder.encode(encoded, rgba);
-
-    return vx.transmitPreEncodedImage(
-        tty,
-        encoded,
-        @intCast(image.width),
-        @intCast(image.height),
-        .rgba,
-    ) catch return error.LoadFailed;
+    return transmitEncodedPng(vx, tty, allocator, png);
 }
 
 /// Convert backend-neutral `graphics.terminal` placement options to Chasen.

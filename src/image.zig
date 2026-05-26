@@ -238,6 +238,58 @@ pub fn decodePng(allocator: std.mem.Allocator, bytes: []const u8) !DecodedImage 
     return image;
 }
 
+/// Encode a decoded RGBA image as a simple PNG.
+///
+/// The encoder writes color type 6 / bit depth 8 and stores zlib data without
+/// compression. It is intended for terminal transport, not file-size
+/// optimization.
+pub fn encodePngRgbaAlloc(allocator: std.mem.Allocator, image: *const DecodedImage) ![]u8 {
+    if (image.width == 0 or image.height == 0) return error.InvalidDimensions;
+
+    const width: usize = @intCast(image.width);
+    const height: usize = @intCast(image.height);
+    const row_data_len = try checkedMul(width, 4);
+    const raw_len = try checkedMul(height, row_data_len + 1);
+    const raw = try allocator.alloc(u8, raw_len);
+    defer allocator.free(raw);
+
+    var raw_offset: usize = 0;
+    for (0..height) |y| {
+        raw[raw_offset] = 0;
+        raw_offset += 1;
+        for (0..width) |x| {
+            const px = image.pixels[y * width + x];
+            raw[raw_offset] = px.rgb.r;
+            raw[raw_offset + 1] = px.rgb.g;
+            raw[raw_offset + 2] = px.rgb.b;
+            raw[raw_offset + 3] = px.alpha;
+            raw_offset += 4;
+        }
+    }
+
+    const compressed = try zlibStoredBlocksAlloc(allocator, raw);
+    defer allocator.free(compressed);
+
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    errdefer out.deinit();
+
+    try out.writer.writeAll(&png_signature);
+
+    var ihdr: [13]u8 = undefined;
+    writeU32(ihdr[0..4], image.width);
+    writeU32(ihdr[4..8], image.height);
+    ihdr[8] = 8;
+    ihdr[9] = @intFromEnum(PngColorType.rgba);
+    ihdr[10] = 0;
+    ihdr[11] = 0;
+    ihdr[12] = 0;
+    try writePngChunk(&out.writer, "IHDR", &ihdr);
+    try writePngChunk(&out.writer, "IDAT", compressed);
+    try writePngChunk(&out.writer, "IEND", &.{});
+
+    return try out.toOwnedSlice();
+}
+
 /// Return the pixel dimensions produced by a resize request.
 pub fn fittedDimensions(source: Dimensions, options: ResizeOptions) !Dimensions {
     if (source.width == 0 or source.height == 0 or options.width == 0 or options.height == 0)
@@ -468,6 +520,55 @@ fn pngChunkCrc(kind: []const u8, data: []const u8) u32 {
     crc.update(kind);
     crc.update(data);
     return crc.final();
+}
+
+fn writePngChunk(writer: *std.Io.Writer, kind: []const u8, data: []const u8) !void {
+    if (kind.len != 4) return error.InvalidPng;
+    if (data.len > std.math.maxInt(u32)) return error.ImageTooLarge;
+
+    var buffer: [4]u8 = undefined;
+    writeU32(&buffer, @intCast(data.len));
+    try writer.writeAll(&buffer);
+    try writer.writeAll(kind);
+    try writer.writeAll(data);
+    writeU32(&buffer, pngChunkCrc(kind, data));
+    try writer.writeAll(&buffer);
+}
+
+fn zlibStoredBlocksAlloc(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    errdefer out.deinit();
+
+    try out.writer.writeAll(&.{ 0x78, 0x01 });
+
+    var offset: usize = 0;
+    while (offset < data.len or (data.len == 0 and offset == 0)) {
+        const remaining = data.len - offset;
+        const chunk_len = @min(remaining, 65535);
+        const final = offset + chunk_len == data.len;
+        try out.writer.writeByte(if (final) 0x01 else 0x00);
+
+        var len_bytes: [2]u8 = undefined;
+        std.mem.writeInt(u16, &len_bytes, @intCast(chunk_len), .little);
+        try out.writer.writeAll(&len_bytes);
+        std.mem.writeInt(u16, &len_bytes, ~@as(u16, @intCast(chunk_len)), .little);
+        try out.writer.writeAll(&len_bytes);
+        try out.writer.writeAll(data[offset .. offset + chunk_len]);
+
+        offset += chunk_len;
+        if (data.len == 0) break;
+    }
+
+    var adler_bytes: [4]u8 = undefined;
+    writeU32(&adler_bytes, std.hash.Adler32.hash(data));
+    try out.writer.writeAll(&adler_bytes);
+
+    return try out.toOwnedSlice();
+}
+
+fn writeU32(out: []u8, value: u32) void {
+    std.debug.assert(out.len >= 4);
+    std.mem.writeInt(u32, out[0..4], value, .big);
 }
 
 fn inflateZlibExact(allocator: std.mem.Allocator, compressed: []const u8, out: []u8) !void {
@@ -745,6 +846,25 @@ test "decodeImage dispatches JPEG bytes" {
 
     try std.testing.expectEqual(SourceFormat.jpeg, image.source_format);
     try std.testing.expectEqual(@as(u8, 128), image.pixelAt(0, 0).?.rgb.b);
+}
+
+test "encodePngRgbaAlloc writes decodable RGBA PNG" {
+    var source = try DecodedImage.init(std.testing.allocator, 2, 1, .jpeg);
+    defer source.deinit(std.testing.allocator);
+    source.setPixel(0, 0, .{ .rgb = .{ .r = 10, .g = 20, .b = 30 }, .alpha = 40 });
+    source.setPixel(1, 0, .{ .rgb = .{ .r = 50, .g = 60, .b = 70 }, .alpha = 80 });
+
+    const encoded = try encodePngRgbaAlloc(std.testing.allocator, &source);
+    defer std.testing.allocator.free(encoded);
+
+    const info = try pngInfo(encoded);
+    try std.testing.expectEqual(Dimensions{ .width = 2, .height = 1 }, info.dimensions);
+    try std.testing.expectEqual(PngColorType.rgba, info.color_type);
+
+    var decoded = try decodePng(std.testing.allocator, encoded);
+    defer decoded.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 10), decoded.pixelAt(0, 0).?.rgb.r);
+    try std.testing.expectEqual(@as(u8, 80), decoded.pixelAt(1, 0).?.alpha);
 }
 
 test "decodePng rejects extra decompressed bytes" {
