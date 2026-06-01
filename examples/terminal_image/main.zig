@@ -108,10 +108,14 @@ pub fn main(init: std.process.Init) !void {
     });
 
     try chasen.runWith(.{
-        .allocator = init.gpa,
-        .io = init.io,
-        .env_map = init.environ_map,
-        .terminal_image_path_loader = chasen_graphics_chasen.decodedImagePathLoader,
+        .runtime = .{
+            .allocator = init.gpa,
+            .io = init.io,
+        },
+        .terminal = .{
+            .env_map = init.environ_map,
+            .image_path_loader = chasen_graphics_chasen.decodedImagePathLoader,
+        },
     }, TerminalImageExample{});
 }
 

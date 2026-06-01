@@ -6,7 +6,7 @@ const max_png_bytes = 16 * 1024 * 1024;
 const max_image_bytes = 16 * 1024 * 1024;
 const max_decoded_rgba_bytes = 64 * 1024 * 1024;
 
-/// Chasen `RunOptions.terminal_image_path_loader` for local PNG files.
+/// Chasen `RunOptions.terminal.image_path_loader` for local PNG files.
 ///
 /// This deliberately avoids `Vaxis.loadImage`, which currently pulls zigimg
 /// into the compile path that caused Zig 0.16 compiler crashes in Chasen core
@@ -28,7 +28,7 @@ pub fn pngPathLoader(
     return transmitEncodedPng(vx, tty, allocator, bytes);
 }
 
-/// Chasen `RunOptions.terminal_image_path_loader` for decoded local images.
+/// Chasen `RunOptions.terminal.image_path_loader` for decoded local images.
 ///
 /// Unlike `pngPathLoader`, this path goes through `graphics.image.decodeImage`
 /// and then re-encodes decoded pixels as PNG before terminal transport. It is
