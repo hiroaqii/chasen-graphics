@@ -18,7 +18,7 @@ const TerminalImageExample = struct {
 
     pub fn init(self: *TerminalImageExample, ctx: *chasen.Ctx(Msg)) !void {
         _ = self;
-        try ctx.loadTerminalImagePath(sample_path, undefined, &loaded, &failed);
+        _ = try ctx.image().loadPath(sample_path, &loaded, &failed);
     }
 
     pub fn update(self: *TerminalImageExample, msg: Msg, ctx: *chasen.Ctx(Msg)) !void {
@@ -90,11 +90,11 @@ const TerminalImageExample = struct {
     }
 };
 
-fn loaded(_: *anyopaque, handle: chasen.TerminalImageHandle) TerminalImageExample.Msg {
+fn loaded(_: chasen.TerminalImageRequestId, handle: chasen.TerminalImageHandle) TerminalImageExample.Msg {
     return .{ .image_loaded = handle };
 }
 
-fn failed(_: *anyopaque, reason: chasen.TerminalImageLoadError) TerminalImageExample.Msg {
+fn failed(_: chasen.TerminalImageRequestId, reason: chasen.TerminalImageLoadError) TerminalImageExample.Msg {
     return .{ .image_failed = reason };
 }
 
