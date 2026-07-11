@@ -11,6 +11,8 @@ const TerminalImageExample = struct {
     load_error: ?chasen.TerminalImageLoadError = null,
 
     pub const Msg = union(enum) {
+        pub const undelivered_policy = .plain;
+
         image_loaded: chasen.TerminalImageHandle,
         image_failed: chasen.TerminalImageLoadError,
         quit,
