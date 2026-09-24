@@ -98,6 +98,10 @@ pub const spinner = struct {
         "▄▂▁▂▄",
         "▂▁▂▄▆",
     };
+    /// One dot moving around a single Braille cell, clockwise.
+    pub const linear_dots_tiny = [_][]const u8{ "⠁", "⠈", "⠐", "⠠", "⢀", "⡀", "⠄", "⠂" };
+    /// One rising/falling bar; each frame occupies one cell.
+    pub const wave_tiny = [_][]const u8{ "▁", "▂", "▄", "▆", "█", "▆", "▄", "▂" };
 };
 
 test "rating glyphs expose unicode and ASCII fallback symbols" {
@@ -171,5 +175,11 @@ test "linear loading presets contain five Unicode cells per frame" {
     }
     for (spinner.wave) |frame| {
         try std.testing.expectEqual(@as(usize, 5), try std.unicode.utf8CountCodepoints(frame));
+    }
+}
+
+test "tiny loading presets contain one Unicode character per frame" {
+    for (spinner.linear_dots_tiny ++ spinner.wave_tiny) |frame| {
+        try std.testing.expectEqual(@as(usize, 1), try std.unicode.utf8CountCodepoints(frame));
     }
 }

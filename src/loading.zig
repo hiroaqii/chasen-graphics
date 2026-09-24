@@ -7,7 +7,7 @@ const braille = @import("braille.zig");
 const blocks = @import("blocks.zig");
 
 pub const Kind = enum { blocks, arc, ripple };
-pub const Size = enum { small, medium, large };
+pub const Size = enum { small, medium, large, tiny };
 pub const Dimensions = struct { width: u16, height: u16 };
 pub const Cell = struct {
     /// One terminal cell; borrowed from immutable program-lifetime data.
@@ -18,6 +18,7 @@ pub const Cell = struct {
 
 /// Nominal dimensions, excluding any label. Circles assume 1:2 terminal cells.
 pub fn dimensions(kind: Kind, size: Size) Dimensions {
+    if (size == .tiny) return .{ .width = 1, .height = 1 };
     const scale: u16 = @as(u16, @intFromEnum(size)) + 1;
     return if (kind == .blocks)
         .{ .width = 6 * scale + 2, .height = 3 * scale + 2 }
@@ -31,6 +32,7 @@ pub fn sample(kind: Kind, size: Size, phase: f32, col: u16, row: u16) Cell {
     const dims = dimensions(kind, size);
     if (col >= dims.width or row >= dims.height) return .{};
     const p = wrap(phase);
+    if (size == .tiny) return sampleTiny(kind, p);
     if (kind == .blocks) return sampleBlocks(size, p, col, row);
 
     const cx = (@as(f32, @floatFromInt(dims.width)) * 2 - 1) / 2;
@@ -76,6 +78,28 @@ fn wrap(phase: f32) f32 {
     return if (std.math.isFinite(phase)) phase - @floor(phase) else 0;
 }
 
+fn sampleTiny(kind: Kind, phase: f32) Cell {
+    // A tiny negative phase can round to 1 after wrapping; keep the index bounded.
+    const frame = @as(usize, @intFromFloat(phase * 8)) % 8;
+    switch (kind) {
+        .blocks => {
+            const frames = [_][]const u8{ "▘", "▝", "▗", "▖" };
+            return .{ .glyph = frames[frame / 2], .intensity = 1 };
+        },
+        .arc => {
+            const perimeter = [_]u8{ 0x01, 0x08, 0x10, 0x20, 0x80, 0x40, 0x04, 0x02 };
+            const mask = perimeter[frame] | perimeter[(frame + 7) % 8] | perimeter[(frame + 6) % 8];
+            return .{ .glyph = braille.glyph(mask), .intensity = 1 };
+        },
+        .ripple => {
+            // Center -> full cell -> outer dots -> faded outer dots.
+            const masks = [_]u8{ 0x36, 0xff, 0xc9, 0xc9 };
+            const lights = [_]f32{ 1, 0.8, 0.5, 0.25 };
+            return .{ .glyph = braille.glyph(masks[frame / 2]), .intensity = lights[frame / 2] };
+        },
+    }
+}
+
 fn sampleBlocks(size: Size, phase: f32, col: u16, row: u16) Cell {
     const scale: u16 = @as(u16, @intFromEnum(size)) + 1;
     const block_width = 2 * scale;
@@ -89,7 +113,7 @@ fn sampleBlocks(size: Size, phase: f32, col: u16, row: u16) Cell {
     return .{ .glyph = glyph, .intensity = light };
 }
 
-test "loading dimensions describe all three sizes" {
+test "loading dimensions preserve the three normal sizes" {
     const expected = [_]Dimensions{
         .{ .width = 8, .height = 5 },
         .{ .width = 14, .height = 8 },
@@ -105,7 +129,7 @@ test "loading dimensions describe all three sizes" {
 
 test "loading sampling wraps a cycle and leaves outside cells empty" {
     for ([_]Kind{ .blocks, .arc, .ripple }) |kind| {
-        for ([_]Size{ .small, .medium, .large }) |size| {
+        for ([_]Size{ .small, .medium, .large, .tiny }) |size| {
             const dims = dimensions(kind, size);
             try std.testing.expectEqualStrings(" ", sample(kind, size, 0, dims.width, 0).glyph);
             try std.testing.expectEqualStrings(" ", sample(kind, size, 0, 0, dims.height).glyph);
@@ -164,4 +188,52 @@ test "ripple moves the innermost ring away from the center" {
     const center = braille.dotMask(1, 3);
     try std.testing.expect(start_mask & center != 0);
     try std.testing.expect(later_mask & center == 0);
+}
+
+test "tiny indicators fit one cell across all frames and handle wrapped phases" {
+    for ([_]Kind{ .blocks, .arc, .ripple }) |kind| {
+        try std.testing.expectEqual(Dimensions{ .width = 1, .height = 1 }, dimensions(kind, .tiny));
+        for (0..8) |frame| {
+            const phase = @as(f32, @floatFromInt(frame)) / 8;
+            const cell = sample(kind, .tiny, phase, 0, 0);
+            try std.testing.expectEqual(@as(usize, 1), try std.unicode.utf8CountCodepoints(cell.glyph));
+            try std.testing.expect(cell.intensity > 0 and cell.intensity <= 1);
+            const negative = sample(kind, .tiny, phase - 1, 0, 0);
+            try std.testing.expectEqualStrings(cell.glyph, negative.glyph);
+            try std.testing.expectEqual(cell.intensity, negative.intensity);
+        }
+        const initial = sample(kind, .tiny, 0, 0, 0);
+        for ([_]f32{ -1e-10, std.math.nan(f32), std.math.inf(f32), -std.math.inf(f32) }) |phase| {
+            const actual = sample(kind, .tiny, phase, 0, 0);
+            try std.testing.expectEqualStrings(initial.glyph, actual.glyph);
+            try std.testing.expectEqual(initial.intensity, actual.intensity);
+        }
+    }
+}
+
+test "tiny blocks rotate through quadrants and arcs keep three moving dots" {
+    for ([_][]const u8{ "▘", "▝", "▗", "▖" }, 0..) |glyph, frame| {
+        try std.testing.expectEqualStrings(glyph, sample(.blocks, .tiny, @as(f32, @floatFromInt(frame)) / 4, 0, 0).glyph);
+    }
+    var seen = [_]bool{false} ** 256;
+    for (0..8) |frame| {
+        const cell = sample(.arc, .tiny, @as(f32, @floatFromInt(frame)) / 8, 0, 0);
+        const mask: u8 = @intCast((try std.unicode.utf8Decode(cell.glyph)) - 0x2800);
+        try std.testing.expect(@popCount(mask) == 3);
+        try std.testing.expect(!seen[mask]);
+        seen[mask] = true;
+    }
+}
+
+test "tiny ripple expands from center to outer dots then fades" {
+    const center = sample(.ripple, .tiny, 0, 0, 0);
+    const full = sample(.ripple, .tiny, 0.25, 0, 0);
+    const outer = sample(.ripple, .tiny, 0.5, 0, 0);
+    const faded = sample(.ripple, .tiny, 0.75, 0, 0);
+    try std.testing.expectEqualStrings("⠶", center.glyph);
+    try std.testing.expectEqualStrings("⣿", full.glyph);
+    try std.testing.expectEqualStrings("⣉", outer.glyph);
+    try std.testing.expectEqualStrings(outer.glyph, faded.glyph);
+    try std.testing.expect(center.intensity > full.intensity and full.intensity > outer.intensity);
+    try std.testing.expect(outer.intensity > faded.intensity);
 }

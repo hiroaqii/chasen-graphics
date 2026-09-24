@@ -51,6 +51,8 @@ Out of scope:
 - `glyph.spinner.circle`: four-frame Unicode circle spinner.
 - `glyph.spinner.linear_dots`: three five-cell frames of sequential dots.
 - `glyph.spinner.wave`: eight five-cell frames of rising/falling bars.
+- `glyph.spinner.linear_dots_tiny`: eight one-cell frames of a moving Braille dot.
+- `glyph.spinner.wave_tiny`: eight one-cell frames of a rising/falling bar.
 
 Selection marker meaning is app/component policy; the constants only provide
 default glyph choices.
@@ -171,20 +173,26 @@ const cell = graphics.loading.sample(.arc, .medium, 0.25, 3, 0);
 // cell.glyph is borrowed for program lifetime; cell.intensity is in 0...1.
 ```
 
-| Kind | Small | Medium | Large |
-| --- | --- | --- | --- |
-| Blocks | 8×5 | 14×8 | 20×11 |
-| Arc / Ripple | 8×4 | 12×6 | 16×8 |
+| Kind | Tiny | Small | Medium | Large |
+| --- | --- | --- | --- | --- |
+| Blocks | 1×1 | 8×5 | 14×8 | 20×11 |
+| Arc / Ripple | 1×1 | 8×4 | 12×6 | 16×8 |
 
 Dimensions are terminal cells and exclude labels. Finite phases wrap modulo
 one; non-finite phases select phase zero. Out-of-bounds samples are empty.
 Arc/Ripple use Braille dots and assume the usual 1:2 terminal cell proportions.
 Glyph appearance and dim brightness depend on the terminal/font.
 
+Use `.tiny` for the minimum non-empty size, one terminal cell. Within that
+cell, Blocks rotates a quadrant, Arc rotates three Braille dots, and Ripple
+expands from center to outer dots before fading. These are simplified motions;
+the existing small/medium/large shapes keep their original geometry.
+
 The caller owns time, speed, color, placement, clipping, and clearing the
 previous frame. These helpers do not write to a terminal or request frames.
-The five-cell Dots/Wave presets above can be passed to an existing one-line
-spinner instead of using cell sampling.
+The Dots/Wave presets above can be passed to an existing one-line spinner
+instead of using cell sampling. Choose `linear_dots_tiny` / `wave_tiny` for
+one-cell frames, or `linear_dots` / `wave` for the existing five-cell frames.
 
 ## Terminal Images
 
