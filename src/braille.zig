@@ -12,6 +12,19 @@ pub const rows: u8 = 4;
 /// range is encoded as exactly three UTF-8 bytes.
 pub const Glyph = [3]u8;
 
+const glyph_table = table: {
+    @setEvalBranchQuota(10000);
+    var values: [256]Glyph = undefined;
+    for (&values, 0..) |*value, mask| value.* = fromDots(@intCast(mask));
+    break :table values;
+};
+
+/// Borrow an encoded glyph from immutable program-lifetime storage.
+/// Unlike a local fromDots result, this slice can safely outlive the caller.
+pub fn glyph(mask: u8) []const u8 {
+    return &glyph_table[mask];
+}
+
 /// Convert an 8-bit Braille dot mask to a UTF-8 Braille glyph.
 ///
 /// Bit 0 maps to dot 1, bit 1 to dot 2, and so on through bit 7 / dot 8. This
@@ -93,4 +106,13 @@ test "dotMask ignores out-of-range coordinates" {
 test "dotMask composes with fromDots" {
     const mask = dotMask(0, 0) | dotMask(0, 1);
     try std.testing.expectEqualStrings("⠃", &fromDots(mask));
+}
+
+test "borrowed glyphs stay valid across subsequent lookups" {
+    const first = glyph(1);
+    const full = glyph(255);
+    try std.testing.expectEqualStrings("⠁", first);
+    try std.testing.expectEqualStrings("⣿", full);
+    try std.testing.expectEqualStrings("⠀", glyph(0));
+    try std.testing.expect(first.ptr == glyph(1).ptr);
 }

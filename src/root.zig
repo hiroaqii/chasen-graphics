@@ -5,6 +5,7 @@ pub const blocks = @import("blocks.zig");
 pub const ascii = @import("ascii.zig");
 pub const pixel = @import("pixel.zig");
 pub const braille = @import("braille.zig");
+pub const loading = @import("loading.zig");
 pub const image = @import("image.zig");
 pub const terminal = @import("terminal.zig");
 

@@ -84,6 +84,20 @@ pub const spinner = struct {
     pub const dots = [_][]const u8{ "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" };
     /// Four-frame Unicode circle spinner.
     pub const circle = [_][]const u8{ "◴", "◷", "◶", "◵" };
+
+    /// Three dots lighting in sequence; each frame occupies five cells.
+    pub const linear_dots = [_][]const u8{ "● · ·", "· ● ·", "· · ●" };
+    /// Five rising/falling bars; each frame occupies five cells.
+    pub const wave = [_][]const u8{
+        "▁▂▄▆█",
+        "▂▄▆█▆",
+        "▄▆█▆▄",
+        "▆█▆▄▂",
+        "█▆▄▂▁",
+        "▆▄▂▁▂",
+        "▄▂▁▂▄",
+        "▂▁▂▄▆",
+    };
 };
 
 test "rating glyphs expose unicode and ASCII fallback symbols" {
@@ -149,4 +163,13 @@ test "spinner glyphs expose ordered circle frames" {
     try std.testing.expectEqualStrings("◷", spinner.circle[1]);
     try std.testing.expectEqualStrings("◶", spinner.circle[2]);
     try std.testing.expectEqualStrings("◵", spinner.circle[3]);
+}
+
+test "linear loading presets contain five Unicode cells per frame" {
+    for (spinner.linear_dots) |frame| {
+        try std.testing.expectEqual(@as(usize, 5), try std.unicode.utf8CountCodepoints(frame));
+    }
+    for (spinner.wave) |frame| {
+        try std.testing.expectEqual(@as(usize, 5), try std.unicode.utf8CountCodepoints(frame));
+    }
 }

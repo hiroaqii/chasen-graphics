@@ -49,6 +49,8 @@ Out of scope:
 - `glyph.spinner.ascii`: conservative ASCII fallback spinner.
 - `glyph.spinner.dots`: ten-frame Unicode dot spinner.
 - `glyph.spinner.circle`: four-frame Unicode circle spinner.
+- `glyph.spinner.linear_dots`: three five-cell frames of sequential dots.
+- `glyph.spinner.wave`: eight five-cell frames of rising/falling bars.
 
 Selection marker meaning is app/component policy; the constants only provide
 default glyph choices.
@@ -145,6 +147,7 @@ to a limited palette.
 - `braille.cols`: number of dot columns in one Braille cell.
 - `braille.rows`: number of dot rows in one Braille cell.
 - `braille.fromDots(mask)`: convert an 8-bit dot mask to a UTF-8 Braille glyph.
+- `braille.glyph(mask)`: borrow a UTF-8 glyph with program lifetime.
 - `braille.dotMask(x, y)`: return the bit mask for a zero-based dot coordinate.
 
 Braille helpers are std-only. They encode dot masks into text glyphs; callers or
@@ -155,6 +158,33 @@ Run the small Braille mask example:
 ```sh
 zig build run-braille-mask
 ```
+
+## Loading Indicators
+
+`loading` samples Blocks, Arc, and Ripple as individual terminal cells without
+allocating. Pass a cycle phase (one full cycle is `1.0`), a `Kind`, a `Size`,
+and zero-based column/row coordinates:
+
+```zig
+const dims = graphics.loading.dimensions(.arc, .medium);
+const cell = graphics.loading.sample(.arc, .medium, 0.25, 3, 0);
+// cell.glyph is borrowed for program lifetime; cell.intensity is in 0...1.
+```
+
+| Kind | Small | Medium | Large |
+| --- | --- | --- | --- |
+| Blocks | 8×5 | 14×8 | 20×11 |
+| Arc / Ripple | 8×4 | 12×6 | 16×8 |
+
+Dimensions are terminal cells and exclude labels. Finite phases wrap modulo
+one; non-finite phases select phase zero. Out-of-bounds samples are empty.
+Arc/Ripple use Braille dots and assume the usual 1:2 terminal cell proportions.
+Glyph appearance and dim brightness depend on the terminal/font.
+
+The caller owns time, speed, color, placement, clipping, and clearing the
+previous frame. These helpers do not write to a terminal or request frames.
+The five-cell Dots/Wave presets above can be passed to an existing one-line
+spinner instead of using cell sampling.
 
 ## Terminal Images
 
