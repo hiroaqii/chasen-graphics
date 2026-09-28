@@ -63,30 +63,6 @@ pub fn build(b: *std.Build) void {
         run_terminal_image_step.dependOn(&run_terminal_image.step);
     }
 
-    const zigimg_dep = b.lazyDependency("zigimg", .{
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const check_zigimg_adapter_step = b.step("check-zigimg-adapter", "Build the optional zigimg image decode adapter");
-    if (zigimg_dep) |dep| {
-        const zigimg_adapter_mod = b.addModule("chasen_graphics_zigimg", .{
-            .root_source_file = b.path("src/zigimg_adapter.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "chasen_graphics", .module = mod },
-                .{ .name = "zigimg", .module = dep.module("zigimg") },
-            },
-        });
-
-        const zigimg_adapter_tests = b.addTest(.{
-            .root_module = zigimg_adapter_mod,
-        });
-        const run_zigimg_adapter_tests = b.addRunArtifact(zigimg_adapter_tests);
-        check_zigimg_adapter_step.dependOn(&run_zigimg_adapter_tests.step);
-    }
-
     const braille_mask_example = b.addExecutable(.{
         .name = "braille-mask",
         .root_module = b.createModule(.{

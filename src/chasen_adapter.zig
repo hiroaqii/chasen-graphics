@@ -8,11 +8,8 @@ const max_decoded_rgba_bytes = 64 * 1024 * 1024;
 
 /// Chasen `RunOptions.terminal.image_path_loader` for local PNG files.
 ///
-/// This deliberately avoids `Vaxis.loadImage`, which currently pulls zigimg
-/// into the compile path that caused Zig 0.16 compiler crashes in Chasen core
-/// examples. It supports PNG files only, reads the IHDR dimensions directly,
-/// base64-encodes the original PNG bytes, and lets libvaxis transmit the
-/// pre-encoded image.
+/// Reads the IHDR dimensions directly, base64-encodes the original PNG bytes,
+/// and lets libvaxis transmit the pre-encoded image without pixel decoding.
 pub fn pngPathLoader(
     _: ?*anyopaque,
     vx: *chasen.TerminalImageLoaderVaxis,
@@ -30,10 +27,9 @@ pub fn pngPathLoader(
 
 /// Chasen `RunOptions.terminal.image_path_loader` for decoded local images.
 ///
-/// Unlike `pngPathLoader`, this path goes through `graphics.image.decodeImage`
-/// and then re-encodes decoded pixels as PNG before terminal transport. It is
-/// the format-aware loader intended for callers that need JPEG cover art
-/// without pulling libvaxis' zigimg path into the app compile.
+/// PNG files are passed through without pixel decoding. Other supported formats
+/// go through `graphics.image.decodeImage` and are re-encoded as PNG before
+/// terminal transport.
 pub fn decodedImagePathLoader(
     _: ?*anyopaque,
     vx: *chasen.TerminalImageLoaderVaxis,
