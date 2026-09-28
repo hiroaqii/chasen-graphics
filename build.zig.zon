@@ -1,6 +1,6 @@
 .{
     .name = .chasen_graphics,
-    .version = "0.0.0",
+    .version = "0.1.0",
     .fingerprint = 0x5d080e92bab89554, // Changing this has security and trust implications.
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
@@ -16,6 +16,7 @@
         "build.zig.zon",
         "src",
         "examples",
+        "docs",
         "LICENSE",
         "README.md",
     },
