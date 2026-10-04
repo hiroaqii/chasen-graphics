@@ -169,7 +169,7 @@ pub fn detectSourceFormat(bytes: []const u8) SourceFormat {
 
 /// Decode encoded image bytes into `DecodedImage`.
 ///
-/// PNG and a small baseline JPEG subset are implemented.
+/// PNG and limited baseline/progressive JPEG subsets are implemented.
 /// Other recognized formats return `UnsupportedImageFormat` until their
 /// decoder is intentionally added.
 pub fn decodeImage(allocator: std.mem.Allocator, bytes: []const u8) !DecodedImage {
@@ -180,13 +180,15 @@ pub fn decodeImage(allocator: std.mem.Allocator, bytes: []const u8) !DecodedImag
     };
 }
 
-/// Decode a small baseline subset of JPEG into `DecodedImage`.
+/// Decode a limited baseline/progressive JPEG subset into `DecodedImage`.
 ///
-/// Supported first slice:
-/// - SOF0 baseline, 8-bit precision
+/// Supported subset:
+/// - SOF0 baseline or SOF2 progressive, 8-bit precision
 /// - grayscale or three-component YCbCr
-/// - non-subsampled, 4:2:2, or 4:2:0 sampling
-/// - no restart interval
+/// - sampling factors up to 2x2
+/// - no restart intervals
+///
+/// EXIF orientation is not applied.
 pub fn decodeJpeg(allocator: std.mem.Allocator, bytes: []const u8) !DecodedImage {
     var decoded = try jpeg.decodePixels(allocator, bytes);
     errdefer decoded.deinit(allocator);

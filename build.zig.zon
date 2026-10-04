@@ -6,8 +6,8 @@
     .dependencies = .{
         // Used by the optional Chasen adapter; the core module is std-only.
         .chasen = .{
-            .url = "git+https://github.com/hiroaqii/chasen.git#b559d0e2534e95ffbefb0cc59cdffff364a62b7a",
-            .hash = "chasen-0.1.0-lvlHSdgOBwD2HvfkrL4chkzeHCSSfP46xD9QZWOGO4nV",
+            .url = "git+https://github.com/hiroaqii/chasen.git#fbede8063440535a01a4f5d3b42511657d231837",
+            .hash = "chasen-0.1.0-lvlHSZGdCQB6XytkvHaYinRq3oIPU3ZpH8tCabbVEMQA",
             .lazy = true,
         },
     },

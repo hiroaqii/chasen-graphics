@@ -51,11 +51,70 @@ The package build resolves Chasen from a fixed Git commit and hash in
 currently resolves this dependency even when running core tests, while the
 core source module itself remains independent of Chasen.
 
+## Installation
+
+From your application's Zig project:
+
+```sh
+zig fetch --save git+https://github.com/hiroaqii/chasen-graphics.git
+```
+
+Add the dependency to `build.zig`. This complete example builds `src/main.zig`
+with the core module:
+
+```zig
+const std = @import("std");
+
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+    const graphics = b.dependency("chasen_graphics", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const exe = b.addExecutable(.{
+        .name = "graphics-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "chasen_graphics", .module = graphics.module("chasen_graphics") }},
+        }),
+    });
+    b.installArtifact(exe);
+}
+```
+
+### Optional Chasen adapter
+
+For a Chasen application, insert the following before `b.installArtifact(exe)`
+in the example above. Obtain Chasen from the graphics dependency so the
+application and adapter use the same Chasen module:
+
+```zig
+const chasen = graphics.builder.lazyDependency("chasen", .{
+    .target = target,
+    .optimize = optimize,
+}) orelse return;
+exe.root_module.addImport("chasen", chasen.module("chasen"));
+exe.root_module.addImport("chasen_graphics_chasen", graphics.module("chasen_graphics_chasen"));
+exe.use_llvm = true;
+exe.use_lld = if (target.result.os.tag == .linux) true else null;
+```
+
+The LLVM backend and Linux LLD setting match Chasen's native build configuration.
+In `src/main.zig`, import `chasen` and `chasen_graphics_chasen` to use the adapter.
+See the [terminal image example](examples/terminal_image/main.zig) for wiring
+`decodedImagePathLoader` into `chasen.runWith`.
+
 ## Usage
 
 The application owns animation timing and rendering. This example samples a
 loading indicator and prints its glyphs once; a Chasen application would draw
 the same cells to its surface and use `intensity` to choose a style.
+
+Save this as `src/main.zig`, then run `zig build` and
+`./zig-out/bin/graphics-demo`:
 
 ```zig
 const std = @import("std");
