@@ -87,7 +87,7 @@ const HuffmanTable = struct {
     class: HuffmanTableClass,
     id: u8,
     code_counts: [16]u8,
-    symbols: [256]u8 = [_]u8{0} ** 256,
+    symbols: [256]u8 = @splat(0),
     symbol_count: u8,
 };
 
@@ -153,9 +153,9 @@ const McuSampleBlocks = struct {
 
 const DecodeState = struct {
     frame: ?FrameHeader = null,
-    quantization_tables: [4]?QuantizationTable = [_]?QuantizationTable{null} ** 4,
-    dc_huffman_tables: [4]?HuffmanTable = [_]?HuffmanTable{null} ** 4,
-    ac_huffman_tables: [4]?HuffmanTable = [_]?HuffmanTable{null} ** 4,
+    quantization_tables: [4]?QuantizationTable = @splat(null),
+    dc_huffman_tables: [4]?HuffmanTable = @splat(null),
+    ac_huffman_tables: [4]?HuffmanTable = @splat(null),
     scan: ?ScanHeader = null,
     scans: [16]ScanData = undefined,
     scan_count: usize = 0,
@@ -172,9 +172,9 @@ const HuffmanCode = struct {
 const CanonicalHuffmanTable = struct {
     codes: [256]HuffmanCode = undefined,
     symbols: [256]u8 = undefined,
-    min_code: [17]i32 = [_]i32{-1} ** 17,
-    max_code: [17]i32 = [_]i32{-1} ** 17,
-    value_offset: [17]i32 = [_]i32{0} ** 17,
+    min_code: [17]i32 = @splat(-1),
+    max_code: [17]i32 = @splat(-1),
+    value_offset: [17]i32 = @splat(0),
     count: usize = 0,
 
     fn init(table: HuffmanTable) !CanonicalHuffmanTable {
@@ -323,7 +323,7 @@ fn decodeBlock(
     ac_table: *const CanonicalHuffmanTable,
     previous_dc: *i16,
 ) !Block {
-    var block = [_]i16{0} ** 64;
+    var block: [64]i16 = @splat(0);
 
     const dc_size_raw = try dc_table.decode(reader);
     if (dc_size_raw > 11) return error.InvalidJpeg;
@@ -716,7 +716,7 @@ fn initProgressiveImage(allocator: std.mem.Allocator, state: DecodeState) !Progr
         const coded_block_height = ceilDivU32(component_sample_height, 8);
         const block_count = try std.math.mul(usize, @intCast(block_width), @intCast(block_height));
         const blocks = try allocator.alloc(Block, block_count);
-        @memset(blocks, [_]i16{0} ** 64);
+        @memset(blocks, @as([64]i16, @splat(0)));
         image.components[index] = .{
             .frame_component = component,
             .quantization_table = state.quantization_tables[component.quantization_table_id] orelse return error.InvalidJpeg,
@@ -1647,7 +1647,7 @@ test "JPEG parser state rejects too many Huffman symbols instead of trapping" {
         0,    0,
         0,    0,
         0,
-    } ++ ([_]u8{0} ** 256) ++ [_]u8{
+    } ++ (@as([256]u8, @splat(0))) ++ [_]u8{
         0xff, 0xd9,
     };
     bytes[7] = 255;
@@ -1662,7 +1662,7 @@ test "JPEG parser state rejects invalid DQT precision instead of trapping" {
         0xff, 0xdb,
         0x00, 0x43,
         0x20,
-    } ++ ([_]u8{0} ** 64) ++ [_]u8{
+    } ++ (@as([64]u8, @splat(0))) ++ [_]u8{
         0xff, 0xd9,
     };
 
@@ -1675,7 +1675,7 @@ test "JPEG parser state rejects zero quantization table values" {
         0xff, 0xdb,
         0x00, 0x43,
         0x00,
-    } ++ ([_]u8{1} ** 64) ++ [_]u8{
+    } ++ (@as([64]u8, @splat(1))) ++ [_]u8{
         0xff, 0xd9,
     };
     bytes[7] = 0;
@@ -1730,7 +1730,7 @@ test "JPEG canonical Huffman table decodes symbols from entropy bits" {
             0, 0, 0, 0,
             0, 0, 0, 0,
         },
-        .symbols = .{ 0xaa, 0xbb, 0xcc } ++ ([_]u8{0} ** 253),
+        .symbols = .{ 0xaa, 0xbb, 0xcc } ++ (@as([253]u8, @splat(0))),
         .symbol_count = 3,
     };
     const canonical = try CanonicalHuffmanTable.init(table);
@@ -1751,7 +1751,7 @@ test "JPEG canonical Huffman table rejects over-subscribed lengths" {
             0, 0, 0, 0,
             0, 0, 0, 0,
         },
-        .symbols = .{ 1, 2, 3 } ++ ([_]u8{0} ** 253),
+        .symbols = .{ 1, 2, 3 } ++ (@as([253]u8, @splat(0))),
         .symbol_count = 3,
     };
 
@@ -1803,7 +1803,7 @@ test "JPEG block decoder reads DC and AC coefficients" {
             0, 0, 0, 0,
             0, 0, 0, 0,
         },
-        .symbols = .{2} ++ ([_]u8{0} ** 255),
+        .symbols = .{2} ++ (@as([255]u8, @splat(0))),
         .symbol_count = 1,
     });
     const ac_table = try CanonicalHuffmanTable.init(.{
@@ -1815,7 +1815,7 @@ test "JPEG block decoder reads DC and AC coefficients" {
             0, 0, 0, 0,
             0, 0, 0, 0,
         },
-        .symbols = .{ 0x01, 0x00 } ++ ([_]u8{0} ** 254),
+        .symbols = .{ 0x01, 0x00 } ++ (@as([254]u8, @splat(0))),
         .symbol_count = 2,
     });
     var reader = EntropyBitReader.init(&[_]u8{0b0110_1100});
@@ -1839,7 +1839,7 @@ test "JPEG block decoder applies AC run length with zigzag order" {
             0, 0, 0, 0,
             0, 0, 0, 0,
         },
-        .symbols = .{0} ++ ([_]u8{0} ** 255),
+        .symbols = .{0} ++ (@as([255]u8, @splat(0))),
         .symbol_count = 1,
     });
     const ac_table = try CanonicalHuffmanTable.init(.{
@@ -1851,7 +1851,7 @@ test "JPEG block decoder applies AC run length with zigzag order" {
             0, 0, 0, 0,
             0, 0, 0, 0,
         },
-        .symbols = .{ 0x21, 0x00 } ++ ([_]u8{0} ** 254),
+        .symbols = .{ 0x21, 0x00 } ++ (@as([254]u8, @splat(0))),
         .symbol_count = 2,
     });
     var reader = EntropyBitReader.init(&[_]u8{0b0011_0000});
@@ -1874,7 +1874,7 @@ test "JPEG block decoder rejects AC category above baseline limit" {
             0, 0, 0, 0,
             0, 0, 0, 0,
         },
-        .symbols = .{0} ++ ([_]u8{0} ** 255),
+        .symbols = .{0} ++ (@as([255]u8, @splat(0))),
         .symbol_count = 1,
     });
     const ac_table = try CanonicalHuffmanTable.init(.{
@@ -1886,7 +1886,7 @@ test "JPEG block decoder rejects AC category above baseline limit" {
             0, 0, 0, 0,
             0, 0, 0, 0,
         },
-        .symbols = .{ 0x0b, 0x00 } ++ ([_]u8{0} ** 254),
+        .symbols = .{ 0x0b, 0x00 } ++ (@as([254]u8, @splat(0))),
         .symbol_count = 2,
     });
     var reader = EntropyBitReader.init(&[_]u8{0b0000_0000});
@@ -1899,7 +1899,7 @@ test "JPEG block decoder rejects AC category above baseline limit" {
 }
 
 test "JPEG dequantize maps quantization table from zigzag order" {
-    var block = [_]i16{0} ** 64;
+    var block: [64]i16 = @splat(0);
     block[0] = 2;
     block[16] = 3;
 
@@ -1920,7 +1920,7 @@ test "JPEG dequantize maps quantization table from zigzag order" {
 }
 
 test "JPEG IDCT level shifts empty block to neutral gray" {
-    const samples = idctBlock([_]i32{0} ** 64);
+    const samples = idctBlock(@as([64]i32, @splat(0)));
 
     for (samples) |sample| {
         try std.testing.expectEqual(@as(u8, 128), sample);
@@ -1928,7 +1928,7 @@ test "JPEG IDCT level shifts empty block to neutral gray" {
 }
 
 test "JPEG IDCT applies DC coefficient uniformly" {
-    var block = [_]i32{0} ** 64;
+    var block: [64]i32 = @splat(0);
     block[0] = 80;
 
     const samples = idctBlock(block);
@@ -2164,7 +2164,7 @@ fn testQuantizationTable() QuantizationTable {
     return .{
         .precision = 0,
         .id = 0,
-        .values = [_]u16{1} ** 64,
+        .values = @splat(1),
     };
 }
 
@@ -2178,7 +2178,7 @@ fn testHuffmanTable(class: HuffmanTableClass) HuffmanTable {
             0, 0, 0, 0,
             0, 0, 0, 0,
         },
-        .symbols = .{0} ++ ([_]u8{0} ** 255),
+        .symbols = .{0} ++ (@as([255]u8, @splat(0))),
         .symbol_count = 1,
     };
 }

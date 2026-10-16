@@ -19,7 +19,7 @@ pub const Cell = struct {
 /// Nominal dimensions, excluding any label. Circles assume 1:2 terminal cells.
 pub fn dimensions(kind: Kind, size: Size) Dimensions {
     if (size == .tiny) return .{ .width = 1, .height = 1 };
-    const scale: u16 = @as(u16, @intFromEnum(size)) + 1;
+    const scale: u16 = @as(u16, @backingInt(size)) + 1;
     return if (kind == .blocks)
         .{ .width = 6 * scale + 2, .height = 3 * scale + 2 }
     else
@@ -101,7 +101,7 @@ fn sampleTiny(kind: Kind, phase: f32) Cell {
 }
 
 fn sampleBlocks(size: Size, phase: f32, col: u16, row: u16) Cell {
-    const scale: u16 = @as(u16, @intFromEnum(size)) + 1;
+    const scale: u16 = @as(u16, @backingInt(size)) + 1;
     const block_width = 2 * scale;
     if (col % (block_width + 1) == block_width or row % (scale + 1) == scale)
         return .{};
@@ -215,7 +215,7 @@ test "tiny blocks rotate through quadrants and arcs keep three moving dots" {
     for ([_][]const u8{ "▘", "▝", "▗", "▖" }, 0..) |glyph, frame| {
         try std.testing.expectEqualStrings(glyph, sample(.blocks, .tiny, @as(f32, @floatFromInt(frame)) / 4, 0, 0).glyph);
     }
-    var seen = [_]bool{false} ** 256;
+    var seen: [256]bool = @splat(false);
     for (0..8) |frame| {
         const cell = sample(.arc, .tiny, @as(f32, @floatFromInt(frame)) / 8, 0, 0);
         const mask: u8 = @intCast((try std.unicode.utf8Decode(cell.glyph)) - 0x2800);

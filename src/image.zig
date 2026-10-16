@@ -281,7 +281,7 @@ pub fn encodePngRgbaAlloc(allocator: std.mem.Allocator, image: *const DecodedIma
     writeU32(ihdr[0..4], image.width);
     writeU32(ihdr[4..8], image.height);
     ihdr[8] = 8;
-    ihdr[9] = @intFromEnum(PngColorType.rgba);
+    ihdr[9] = @backingInt(PngColorType.rgba);
     ihdr[10] = 0;
     ihdr[11] = 0;
     ihdr[12] = 0;
@@ -1086,7 +1086,7 @@ fn minimalNeutralJpegBytes() []const u8 {
         0xff, 0xdb,
         0x00, 0x43,
         0x00,
-    } ++ ([_]u8{1} ** 64) ++ [_]u8{
+    } ++ (@as([64]u8, @splat(1))) ++ [_]u8{
         0xff, 0xc4,
         0x00, 0x14,
         0x00, 1,
