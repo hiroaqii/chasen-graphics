@@ -1,13 +1,13 @@
 .{
     .name = .chasen_graphics,
-    .version = "0.1.2",
+    .version = "0.1.3",
     .fingerprint = 0x5d080e92bab89554, // Changing this has security and trust implications.
-    .minimum_zig_version = "0.17.0",
+    .minimum_zig_version = "0.16.0",
     .dependencies = .{
         // Used by the optional Chasen adapter; the core module is std-only.
         .chasen = .{
-            .url = "git+https://github.com/hiroaqii/chasen.git#353f8c9c98211f134ae5b38c0cc37f04e58d07c6",
-            .hash = "chasen-0.1.3-lvlHSadPCgAiPPs6R1vajFPrhUcr84ZClM8idsg1WBBE",
+            .url = "git+https://github.com/hiroaqii/chasen.git#741f85cfd9a4f08ecfaa544d781c8e1040c46a0d",
+            .hash = "chasen-0.1.4-lvlHSQM8CgB11Ql05hXQcP0HtDxYSBuLGIQ7NAYrNR0v",
             .lazy = true,
         },
     },

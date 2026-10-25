@@ -11,7 +11,7 @@ separate module.
 
 ## Requirements
 
-Zig 0.17.0.
+Zig 0.16.0.
 
 ## Current Status
 

@@ -189,7 +189,7 @@ fn appendPngChunk(out: *std.ArrayList(u8), allocator: std.mem.Allocator, chunk_t
     defer crc_body.deinit(allocator);
     try crc_body.appendSlice(allocator, chunk_type);
     try crc_body.appendSlice(allocator, data);
-    try appendU32Be(out, allocator, std.hash.Crc32.hash(crc_body.items));
+    try appendU32Be(out, allocator, std.hash.crc.Crc32.hash(crc_body.items));
 }
 
 fn appendU16Le(out: *std.ArrayList(u8), allocator: std.mem.Allocator, value: u16) !void {
